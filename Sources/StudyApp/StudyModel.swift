@@ -18,6 +18,7 @@ import SwiftUI
   @Published var currentSentence: Sentence?
   @Published var currentLineIndex = 0
   @Published var currentToken: Token?
+  @Published var pinnedToken: Token?
   @Published var hoverToken: Token?
   @Published var dictionaryEntry: DictionaryEntry?
   @Published var realtime = true
@@ -45,9 +46,10 @@ import SwiftUI
   var selectedDictionaryID: UUID?
   var lastPriorityTime: Double = -300
   var activeSentenceIndex: Int?
-  init() {
+  init(prepareStorage: Bool = true) {
     bridge.onTime = { [weak self] t, d, s in self?.update(time: t, duration: d, state: s) }
     bridge.onError = { [weak self] message in self?.error = message }
+    guard prepareStorage else { return }
     storageTask = Task.detached { (try StudyStore(), try EijiroProvider()) }
     Task {
       do {
@@ -85,6 +87,7 @@ import SwiftUI
     currentToken = nil
     currentLineIndex = 0
     hoverToken = nil
+    pinnedToken = nil
     dictionaryEntry = nil
     selectedDictionaryID = nil
     activeSentenceIndex = nil
@@ -279,6 +282,7 @@ import SwiftUI
   }
   func update(time t: Double, duration d: Double, state: Int) {
     guard ready else { return }
+    let resumedPlayback = !playing && state == 1
     let discontinuity = abs(t - time) > 1.0
     if abs(t - time) >= 0.1 || discontinuity || playing != (state == 1) { time = t }
     if d > 0, d != duration { duration = d }
@@ -293,11 +297,19 @@ import SwiftUI
       currentSentence = sentence.flatMap { document?.sentences[$0.index] }
     }
     let token = timeline.token(at: t)
-    if currentToken?.id != token?.id {
+    let tokenChanged = currentToken?.id != token?.id
+    let resumeRealtime =
+      realtime && state == 1 && pinnedToken != nil
+      && (resumedPlayback || tokenChanged)
+    if resumeRealtime {
+      pinnedToken = nil
+      hoverToken = nil
+    }
+    if tokenChanged {
       currentToken = token
-      if hoverToken == nil { lookup() }
       prefetchDictionary(at: t)
     }
+    if (tokenChanged || resumeRealtime) && hoverToken == nil { lookup() }
     if discontinuity || (t - lastPriorityTime > 30 && currentSentence?.grammarAnalysis == nil) {
       prioritize(t)
     }
@@ -320,11 +332,26 @@ import SwiftUI
     }
   }
   func hover(_ token: Token?, exiting: UUID? = nil) {
+    guard pinnedToken == nil else { return }
     if let exiting, hoverToken?.id != exiting { return }
     hoverToken = token
     lookup()
   }
-  var displayedToken: Token? { hoverToken ?? (realtime ? currentToken : nil) }
+  func pinDictionary(_ token: Token) {
+    guard token.lexical else { return }
+    pinnedToken = token
+    hoverToken = nil
+    lookup()
+  }
+  func releaseDictionaryPin() {
+    pinnedToken = nil
+    hoverToken = nil
+    lookup()
+  }
+  func dictionaryModeChanged() {
+    if realtime && playing { releaseDictionaryPin() } else { lookup() }
+  }
+  var displayedToken: Token? { pinnedToken ?? hoverToken ?? (realtime ? currentToken : nil) }
   var subtitleLines: [CaptionLine] { timeline?.lines ?? [] }
   func dictionaryKey(_ token: Token) -> String {
     settings.dictionary + ":" + token.normalized + ":" + (token.partOfSpeech ?? "") + ":"

@@ -56,9 +56,10 @@ struct MainView: View {
         VStack(spacing: 18) {
           Image(systemName: "captions.bubble").font(.system(size: 48)).foregroundStyle(.secondary)
           Text("英語を、動画と一緒に読み解く").font(.title2)
-          Text("英語の自動字幕がある YouTube 動画を読み込みます。\n字幕の単語にマウスを置くと、詳細辞書を表示します。").multilineTextAlignment(
-            .center
-          ).foregroundStyle(.secondary)
+          Text("英語の自動字幕がある YouTube 動画を読み込みます。\n字幕の単語にマウスを置くと詳細辞書を表示し、クリックすると固定します。")
+            .multilineTextAlignment(
+              .center
+            ).foregroundStyle(.secondary)
           if model.loading { ProgressView() }
           Text(model.stage).font(.callout)
           if let error = model.grammarError {
@@ -111,11 +112,18 @@ struct ErrorDetails: View {
 }
 struct DictionaryPane: View {
   @ObservedObject var model: StudyModel
-  var detailed: Bool { model.hoverToken != nil || !model.realtime }
+  var detailed: Bool { model.pinnedToken != nil || model.hoverToken != nil || !model.realtime }
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
       HStack {
         Label("辞書", systemImage: "book.closed").font(.headline)
+        if model.pinnedToken != nil {
+          Button {
+            model.releaseDictionaryPin()
+          } label: {
+            Label("固定を解除", systemImage: "pin.slash")
+          }.font(.caption)
+        }
         Spacer()
         Text(model.settings.dictionary == "eijiro" ? "英辞郎" : "macOS 辞書").font(.caption)
           .foregroundStyle(.secondary)
@@ -123,7 +131,7 @@ struct DictionaryPane: View {
       Picker("辞書モード", selection: $model.realtime) {
         Text("リアルタイム").tag(true)
         Text("通常 / 詳細").tag(false)
-      }.pickerStyle(.segmented).onChange(of: model.realtime) { model.lookup() }
+      }.pickerStyle(.segmented).onChange(of: model.realtime) { model.dictionaryModeChanged() }
       if model.realtime && !detailed {
         GeometryReader { geometry in
           VStack(spacing: 22) {
@@ -167,7 +175,9 @@ struct DictionaryPane: View {
             Text(pos(token.partOfSpeech)).font(.system(size: 13, weight: .medium))
               .padding(.horizontal, 10).padding(.vertical, 5)
               .background(Color.accentColor.opacity(0.12), in: Capsule())
-            if model.hoverToken != nil {
+            if model.pinnedToken != nil {
+              Label("クリックで固定中", systemImage: "pin.fill").font(.caption).foregroundStyle(.orange)
+            } else if model.hoverToken != nil {
               Text("マウスで選択中").font(.caption).foregroundStyle(.secondary)
             }
           }
@@ -207,7 +217,7 @@ struct DictionaryPane: View {
       } else {
         VStack(spacing: 12) {
           Image(systemName: "text.cursor").font(.system(size: 30)).foregroundStyle(.tertiary)
-          Text(model.realtime ? "発話中の単語と意味を表示します" : "字幕の単語にマウスを置いてください").font(.body)
+          Text(model.realtime ? "発話中の単語と意味を表示します" : "字幕の単語にマウスを置くか、クリックしてください").font(.body)
             .foregroundStyle(.secondary)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
       }
@@ -299,13 +309,23 @@ struct SubtitleLineView: View {
       FlowLayout(spacing: 5) {
         ForEach(line.tokens) { token in
           VStack(spacing: 2) {
-            Text(token.surface).font(
-              .system(size: current ? 26 : 21, weight: current ? .medium : .regular)
-            )
-            .padding(.horizontal, 2).padding(.vertical, 3)
-            .background(
-              model.currentToken?.id == token.id ? Color.accentColor.opacity(0.24) : .clear,
-              in: RoundedRectangle(cornerRadius: 4))
+            Button {
+              model.pinDictionary(token)
+            } label: {
+              Text(token.surface).font(
+                .system(size: current ? 26 : 21, weight: current ? .medium : .regular)
+              )
+              .padding(.horizontal, 2).padding(.vertical, 3)
+              .background(
+                model.currentToken?.id == token.id ? Color.accentColor.opacity(0.24) : .clear,
+                in: RoundedRectangle(cornerRadius: 4)
+              )
+              .overlay {
+                RoundedRectangle(cornerRadius: 4)
+                  .stroke(model.pinnedToken?.id == token.id ? Color.orange : .clear, lineWidth: 1.5)
+              }
+            }.buttonStyle(.plain).disabled(!token.lexical)
+              .help(token.lexical ? "クリックして辞書を固定" : "")
             if abs(line.index - model.currentLineIndex) <= 1 {
               ForEach(Array(spans(token).enumerated()), id: \.offset) { _, span in
                 VStack(spacing: 2) {
