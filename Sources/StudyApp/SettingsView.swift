@@ -75,12 +75,20 @@ struct SettingsView: View {
           if model.settings.provider == "local" {
             TextField("Base URL", text: $model.settings.baseURL)
             TextField("ローカル LLM のモデル名", text: $model.settings.localModel)
+            Picker("同時解析数", selection: $model.settings.localConcurrency) {
+              Text("1（ローカルPC向け）").tag(1)
+              Text("2（並列処理できるサーバー向け）").tag(2)
+            }
             SecureField("API key（任意）", text: $apiKey)
             Text("API keyはKeychainに保存します。字幕の英文を上記URLへ送信します。")
               .font(.caption).foregroundStyle(.secondary)
           } else {
             TextField("Codex 実行ファイル", text: $model.settings.codexPath)
             TextField("Codex のモデル名", text: $model.settings.codexModel)
+            Picker("同時解析数", selection: $model.settings.codexConcurrency) {
+              Text("1").tag(1)
+              Text("2（複数の文を並列解析）").tag(2)
+            }
             Text("実行ファイルとモデル名は空欄でCLIの設定を使用します。モデルIDはgpt-6-lunaなどを指定してください。事前にターミナルで認証が必要です。")
               .font(.caption).foregroundStyle(.secondary)
           }

@@ -196,7 +196,7 @@ struct GrammarStructureTests {
     #expect(transcript.count == 3)
     #expect(transcript.map { $0["target"] as? Bool } == [false, true, false])
     let indices = transcript.flatMap {
-      ($0["atoms"] as! [[String: Any]]).map { $0["index"] as! Int }
+      ($0["atoms"] as! [[Any]]).map { $0[0] as! Int }
     }
     #expect(indices == Array(indices.indices))
   }

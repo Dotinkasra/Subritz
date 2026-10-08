@@ -49,9 +49,9 @@ struct GrammarContextTests {
     let transcript = try #require(input["transcript"] as? [[String: Any]])
     #expect(transcript.map { $0["text"] as? String } == units.map(\.text))
     #expect(transcript.map { $0["target"] as? Bool } == [false, true, false])
-    let targetAtoms = try #require(transcript[1]["atoms"] as? [[String: Any]])
-    #expect(targetAtoms.map { $0["text"] as? String } == units[1].tokens.map(\.surface))
-    #expect((targetAtoms[0]["index"] as? Int ?? 0) > 0)
+    let targetAtoms = try #require(transcript[1]["atoms"] as? [[Any]])
+    #expect(targetAtoms.map { $0[1] as? String } == units[1].tokens.map(\.surface))
+    #expect((targetAtoms[0][0] as? Int ?? 0) > 0)
 
   }
   @Test func twoDisplayLinesAreOneGrammarUnit() throws {

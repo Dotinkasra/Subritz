@@ -72,17 +72,20 @@ struct MainView: View {
             ).foregroundStyle(.secondary)
           if model.loading { ProgressView() }
           Text(model.stage).font(.callout)
-          if let error = model.grammarError {
-            Text(error).foregroundStyle(.orange).frame(maxWidth: 600)
-            if let details = model.grammarErrorDetails { ErrorDetails(text: details) }
-            HStack {
-              Button("再試行") { model.retryGrammar() }
-              Button("Provider 設定を開く") { model.showSettings = true }
-              Button("文法表示なしで動画を開く") { model.continuePlayback() }
-            }
-          }
+
         }.padding()
         Spacer()
+      }
+      if model.ready, let error = model.grammarError {
+        VStack(alignment: .leading, spacing: 8) {
+          HStack {
+            Text("文法解析：" + error).font(.callout).foregroundStyle(.orange)
+            Spacer()
+            Button("解析を再試行") { model.retryGrammar() }
+            Button("設定") { model.showSettings = true }
+          }
+          if let details = model.grammarErrorDetails { ErrorDetails(text: details) }
+        }.padding(12)
       }
       if let error = model.error {
         VStack(alignment: .leading, spacing: 8) {
@@ -391,6 +394,15 @@ struct SubtitleLineView: View {
         } else if let analysis = sentence.grammarAnalysis, analysis.pattern == .UNKNOWN {
           Text(analysis.spans.isEmpty ? "この部分の構造は未確定です" : "判別できた部分を表示しています")
             .font(.caption).foregroundStyle(.secondary)
+        }
+        if sentence.grammarStatus == .analyzing || sentence.grammarStatus == .queued
+          || (sentence.grammarStatus == .notQueued && sentence.grammarAnalysis == nil)
+        {
+          HStack(spacing: 8) {
+            if sentence.grammarStatus == .analyzing { ProgressView().controlSize(.small) }
+            Text(sentence.grammarStatus == .analyzing ? "文法解析中…" : "この位置の文法を順に解析します")
+              .font(.caption).foregroundStyle(.secondary)
+          }
         } else if sentence.grammarStatus == .failed {
           HStack {
             Text("この文の文法表示は省略しました").font(.caption).foregroundStyle(.secondary)

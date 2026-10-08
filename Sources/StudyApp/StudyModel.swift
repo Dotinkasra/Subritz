@@ -151,7 +151,7 @@ import SwiftUI
         duration = probe.video.duration
         fingerprint = key
         scheduler = GrammarScheduler(provider: provider, context: sentences)
-        await initialGrammar(sid: sid)
+        continuePlayback()
       } catch is CancellationError {} catch {
         guard sid == session else { return }
         loading = false
@@ -162,101 +162,167 @@ import SwiftUI
       }
     }
   }
-  func initialGrammar(sid: UUID) async {
-    guard let scheduler, let document else { return }
-    let initial = document.sentences.filter { $0.startTime < 300 && $0.grammarAnalysis == nil }
-    let batches = GrammarContract.batches(initial)
-    do {
-      for (index, batch) in batches.enumerated() {
-        try Task.checkCancellation()
-        guard sid == session else { return }
-        phase = .initialGrammarAnalysis(progress: Double(index) / Double(max(1, batches.count)))
-        stage = "先頭5分の文法を解析しています… \(Int(Double(index)/Double(max(1,batches.count))*100))%"
-        mark(batch, status: .analyzing)
-        do {
-          let results = try await scheduler.analyze(batch)
-          guard sid == session, !Task.isCancelled else { return }
-          apply(results)
-          mark(
-            batch.filter { sentence in !results.contains { $0.sentenceId == sentence.id } },
-            status: .failed)
-        } catch let failure as AppFailure where failure.code == .grammarInvalidResponse {
-          guard sid == session, !Task.isCancelled else { return }
-          mark(batch, status: .failed)
-          StudyLog.grammar.error("Invalid grammar response; continuing with subtitles")
-        }
-        await persistCurrentDocument()
-      }
-      guard sid == session else { return }
-      continuePlayback()
-    } catch is CancellationError {} catch {
-      guard sid == session else { return }
-      loading = false
-      mark(
-        self.document?.sentences.filter { $0.startTime < 300 && $0.grammarAnalysis == nil } ?? [],
-        status: .failed)
-      grammarError = error.localizedDescription
-      grammarErrorDetails = (error as? AppFailure)?.details
-      stage = "文法解析を中断しました。再試行するか、文法表示なしで動画を開けます。"
-    }
-  }
   func retryCurrentGrammar() {
-    guard var sentence = currentSentence, let scheduler else { return }
+    guard var sentence = currentSentence else { return }
     sentence.grammarAnalysis = nil
+    enqueueGrammarRetry([sentence])
+  }
+  func retryGrammar() {
+    guard ready, let document else {
+      load()
+      return
+    }
+    enqueueGrammarRetry(
+      document.sentences.filter {
+        $0.grammarAnalysis == nil && $0.endTime >= time && $0.startTime < time + 300
+      })
+  }
+  func enqueueGrammarRetry(_ sentences: [Sentence]) {
+    guard let scheduler else { return }
     let sid = session
-    mark([sentence], status: .queued)
+    let previous = grammarError == nil ? nil : backgroundTask
+    previous?.cancel()
     Task {
-      await scheduler.enqueue([sentence], priority: true, retryFailed: true)
+      await previous?.value
+      guard sid == session else { return }
+      grammarError = nil
+      grammarErrorDetails = nil
+      mark(sentences, status: .queued)
+      await scheduler.enqueue(sentences, priority: true, retryFailed: true)
       guard sid == session else { return }
       startBackground()
     }
-  }
-  func retryGrammar() {
-    load()
   }
   func continuePlayback() {
     loading = false
     ready = true
     phase = .ready
     grammarError = nil
-    stage = "再生できます"
+    stage = "再生できます。文法は現在位置の前後から解析します"
     if let d = document { timeline = Timeline(d.sentences) }
-    Task {
-      await persistCurrentDocument()
-      await refreshStorage()
-    }
     prefetchDictionary(at: time)
     startBackground()
   }
+  func grammarDemand(at time: Double) -> [Sentence] {
+    let nearby =
+      document?.sentences.filter {
+        $0.endTime >= max(0, time - 10) && $0.startTime < time + 300 && $0.grammarAnalysis == nil
+      } ?? []
+    // Current/future speech first; recent past remains available for look-back.
+    return nearby.filter { $0.endTime >= time } + nearby.filter { $0.endTime < time }.reversed()
+  }
   func startBackground() {
-    guard !backgroundRunning else { return }
+    guard ready, !backgroundRunning, grammarError == nil, let scheduler else { return }
     backgroundRunning = true
     let sid = session
     backgroundTask = Task {
-      defer { if sid == session { backgroundRunning = false } }
-      guard let scheduler, let d = document else { return }
-      phase = .backgroundAnalysis
-      StudyLog.grammar.info("Starting background grammar queue")
-      await scheduler.enqueue(d.sentences.filter { $0.startTime >= 300 })
-      while !Task.isCancelled {
-        let batch = await scheduler.next()
-        if batch.isEmpty { break }
-        mark(batch, status: .analyzing)
-        do {
-          let results = try await scheduler.analyze(batch)
-          guard sid == session, !Task.isCancelled else { return }
-          apply(results)
-          mark(
-            batch.filter { sentence in !results.contains { $0.sentenceId == sentence.id } },
-            status: .failed)
-          await persistCurrentDocument()
-        } catch is CancellationError { return } catch {
-          guard sid == session else { return }
-          mark(batch, status: .failed)
-          stage = "バックグラウンド文法解析に失敗しました：" + error.localizedDescription
+      defer {
+        if sid == session {
+          backgroundRunning = false
+          let unfinished = document?.sentences.filter { $0.grammarStatus == .analyzing } ?? []
+          mark(unfinished, status: grammarError == nil ? .queued : .failed)
+          if !Task.isCancelled, grammarError == nil {
+            // An enqueue can arrive while the group is draining its last child.
+            // Hand off after clearing the running flag so that work is not stranded.
+            Task {
+              guard await scheduler.hasQueuedWork, sid == session, ready else { return }
+              startBackground()
+            }
+          }
         }
       }
+      // Seed the cache once, before any incremental grammar writes. Playback is
+      // already available; a cached document requires no full rewrite.
+      await persistProgress(changed: [], sid: sid)
+      guard sid == session, !Task.isCancelled else { return }
+      let demand = grammarDemand(at: time)
+      mark(demand.filter { $0.grammarStatus != .failed }, status: .queued)
+      let discarded = await scheduler.focus(on: demand)
+      guard sid == session, !Task.isCancelled else { return }
+      mark(discarded, status: .notQueued)
+      phase = .backgroundAnalysis
+      let workers = await scheduler.workerLimit
+      await withTaskGroup(of: GrammarWorkResult.self) { group in
+        for slot in 0..<workers {
+          guard sid == session, !Task.isCancelled else {
+            group.cancelAll()
+            return
+          }
+          _ = await submitGrammar(
+            to: &group, scheduler: scheduler, sid: sid,
+            maxSentences: slot == 0 ? 2 : GrammarContract.maxSentences)
+        }
+        while let outcome = await group.next() {
+          guard sid == session, !Task.isCancelled else {
+            group.cancelAll()
+            return
+          }
+          switch outcome.result {
+          case .success(let results):
+            apply(results)
+            mark(
+              outcome.batch.filter { sentence in !results.contains { $0.sentenceId == sentence.id }
+              }, status: .failed)
+            await persistProgress(changed: Set(outcome.batch.map(\.id)), sid: sid)
+            guard sid == session, !Task.isCancelled else {
+              group.cancelAll()
+              return
+            }
+          case .failure(let error):
+            if error is CancellationError {
+              if Task.isCancelled {
+                group.cancelAll()
+                return
+              }
+              // A seek canceled work outside the new look-ahead window.
+              mark(outcome.batch, status: .notQueued)
+              _ = await submitGrammar(to: &group, scheduler: scheduler, sid: sid, maxSentences: 2)
+              continue
+            }
+            mark(outcome.batch, status: .failed)
+            if (error as? AppFailure)?.code != .grammarInvalidResponse {
+              grammarError = error.localizedDescription
+              grammarErrorDetails = (error as? AppFailure)?.details
+              stage = "文法解析を中断しました。動画・字幕・辞書は引き続き使えます"
+              group.cancelAll()
+              return
+            }
+          }
+          let demand = grammarDemand(at: time)
+          let remaining = demand.filter { $0.grammarStatus != .failed }.count
+          stage =
+            remaining > 0
+            ? "文法をバックグラウンド解析中… 先読み範囲の残り\(remaining)文"
+            : demand.isEmpty ? "現在位置から5分先までの文法を解析済みです" : "文法表示を準備しました。一部の文は再解析できます"
+          _ = await submitGrammar(
+            to: &group, scheduler: scheduler, sid: sid, maxSentences: GrammarContract.maxSentences)
+        }
+      }
+      if sid == session, grammarError == nil, !Task.isCancelled { phase = .ready }
+      await refreshStorage()
     }
+  }
+  func submitGrammar(
+    to group: inout TaskGroup<GrammarWorkResult>, scheduler: GrammarScheduler, sid: UUID,
+    maxSentences: Int
+  ) async -> Bool {
+    let batch = await scheduler.next(maxSentences: maxSentences)
+    guard !batch.isEmpty, sid == session, !Task.isCancelled else { return false }
+    mark(batch, status: .analyzing)
+    group.addTask {
+      do {
+        return GrammarWorkResult(batch: batch, result: .success(try await scheduler.analyze(batch)))
+      } catch { return GrammarWorkResult(batch: batch, result: .failure(error)) }
+    }
+    return true
+  }
+  func persistProgress(changed: Set<UUID>, sid: UUID) async {
+    guard sid == session, let document else { return }
+    let key = fingerprint
+    let limit = settings.cacheMB * 1024 * 1024
+    do {
+      try await store?.saveProgress(document, changed: changed, fingerprint: key, limit: limit)
+    } catch { if sid == session { self.error = "キャッシュを保存できませんでした：" + error.localizedDescription } }
   }
   func mark(_ batch: [Sentence], status: GrammarStatus) {
     let ids = Set(batch.map(\.id))
@@ -286,15 +352,6 @@ import SwiftUI
   func refreshCurrentSentence() {
     if let i = activeSentenceIndex, let d = document, i < d.sentences.count {
       currentSentence = d.sentences[i]
-    }
-  }
-  func persistCurrentDocument() async {
-    guard let d = document else { return }
-    let sid = session
-    let key = fingerprint
-    let limit = settings.cacheMB * 1024 * 1024
-    do { try await store?.save(d, fingerprint: key, limit: limit) } catch {
-      if sid == session { self.error = "キャッシュを保存できませんでした：" + error.localizedDescription }
     }
   }
   func update(time t: Double, duration d: Double, state: Int) {
@@ -327,25 +384,30 @@ import SwiftUI
       prefetchDictionary(at: t)
     }
     if (tokenChanged || resumeRealtime) && hoverToken == nil { lookup() }
-    if discontinuity || (t - lastPriorityTime > 30 && currentSentence?.grammarAnalysis == nil) {
-      prioritize(t)
+    if discontinuity || t - lastPriorityTime > 15 {
+      prioritize(t, cancelObsolete: discontinuity)
     }
   }
   func seek(_ t: Double) {
     bridge.seek(t)
     update(time: t, duration: duration, state: playing ? 1 : 2)
-    prioritize(t)
+    prioritize(t, cancelObsolete: true)
   }
-  func prioritize(_ t: Double) {
+  func prioritize(_ t: Double, cancelObsolete: Bool = false) {
     lastPriorityTime = t
-    guard let scheduler, let d = document else { return }
-    let pending = d.sentences.filter {
-      $0.endTime >= t && $0.startTime < t + 300 && $0.grammarAnalysis == nil
-    }
+    guard grammarError == nil, let scheduler else { return }
+    let pending = grammarDemand(at: t)
     let sid = session
     Task {
-      await scheduler.enqueue(pending, priority: true)
-      if sid == session { startBackground() }
+      guard sid == session else { return }
+      let discarded = await scheduler.focus(on: pending, cancelObsolete: cancelObsolete)
+      guard sid == session else { return }
+      mark(discarded, status: .notQueued)
+      let ids = Set(pending.map(\.id))
+      mark(
+        document?.sentences.filter { ids.contains($0.id) && $0.grammarStatus == .notQueued } ?? [],
+        status: .queued)
+      startBackground()
     }
   }
   func hover(_ token: Token?, exiting: UUID? = nil) {
@@ -585,4 +647,9 @@ import SwiftUI
       } catch { cacheMessage = error.localizedDescription }
     }
   }
+}
+
+struct GrammarWorkResult {
+  let batch: [Sentence]
+  let result: Result<[Analysis], Error>
 }

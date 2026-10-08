@@ -33,7 +33,7 @@ final class MockCompletionProtocol: URLProtocol {
       let response: Data
       if let input = input as? [String: Any] {
         let transcript = input["transcript"] as! [[String: Any]]
-        let atoms = transcript.flatMap { $0["atoms"] as! [[String: Any]] }
+        let atoms = transcript.flatMap { $0["atoms"] as! [[Any]] }
         response = try JSONSerialization.data(withJSONObject: [
           "schemaVersion": 2, "clauses": [],
           "unresolved": [

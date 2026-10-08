@@ -136,12 +136,14 @@ public struct AppSettings: Codable, Sendable, Equatable {
     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("YouTubeEnglishStudy", isDirectory: true)
   }
+  public var localConcurrency = 1
+  public var codexConcurrency = 1
   public var timeout: Double = 120
   public var cacheMB = 1024
   public init() {}
   enum CodingKeys: String, CodingKey {
     case ytDlpPath, codexPath, dictionary, provider, baseURL, localModel, codexModel,
-      cacheDirectory, timeout, cacheMB
+      cacheDirectory, timeout, cacheMB, localConcurrency, codexConcurrency
   }
   enum LegacyKeys: String, CodingKey { case model }
   public init(from decoder: Decoder) throws {
@@ -155,6 +157,10 @@ public struct AppSettings: Codable, Sendable, Equatable {
     localModel = try c.decodeIfPresent(String.self, forKey: .localModel) ?? localModel
     codexModel = try c.decodeIfPresent(String.self, forKey: .codexModel) ?? codexModel
     cacheDirectory = try c.decodeIfPresent(String.self, forKey: .cacheDirectory) ?? cacheDirectory
+    localConcurrency = max(
+      1, min(2, try c.decodeIfPresent(Int.self, forKey: .localConcurrency) ?? 1))
+    codexConcurrency = max(
+      1, min(2, try c.decodeIfPresent(Int.self, forKey: .codexConcurrency) ?? 1))
     timeout = try c.decodeIfPresent(Double.self, forKey: .timeout) ?? timeout
     cacheMB = try c.decodeIfPresent(Int.self, forKey: .cacheMB) ?? cacheMB
     let old = try decoder.container(keyedBy: LegacyKeys.self)
@@ -175,7 +181,6 @@ public struct AppSettings: Codable, Sendable, Equatable {
 
 public enum VideoLoadPhase {
   case idle, validatingURL, probingVideo, fetchingCaptions, parsingCaptions, buildingTimeline
-  case initialGrammarAnalysis(progress: Double)
   case ready, playing, backgroundAnalysis
   case failed(AppFailure)
 }

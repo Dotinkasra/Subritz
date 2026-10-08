@@ -220,6 +220,83 @@ public actor StudyStore {
     }
     try evict(limit: limit, protecting: document.video.id)
   }
+  // Captions and timings are immutable while grammar progresses. Update only
+  // the changed sentences; the first write (or a cleared cache) creates a snapshot.
+  public func saveProgress(
+    _ document: StudyDocument, changed: Set<UUID>, fingerprint: String, limit: Int
+  ) throws {
+    let exists =
+      !(try db.rows(
+        "SELECT fingerprint FROM cache_entries WHERE fingerprint=?", values: [fingerprint])).isEmpty
+    let sentences = document.sentences.filter { changed.contains($0.id) }
+    var matching = exists
+    for sentence in sentences where matching {
+      matching =
+        !(try db.rows(
+          "SELECT id FROM sentences WHERE fingerprint=? AND id=?",
+          values: [fingerprint, sentence.id.uuidString])).isEmpty
+    }
+    guard matching else {
+      try save(document, fingerprint: fingerprint, limit: limit)
+      return
+    }
+    guard !sentences.isEmpty else { return }
+    try db.execute("BEGIN IMMEDIATE")
+    do {
+      var delta = 0
+      for sentence in sentences {
+        try Task.checkCancellation()
+        let id = sentence.id.uuidString
+        let oldSentence =
+          try db.rows(
+            "SELECT length(CAST(payload AS BLOB)) FROM sentences WHERE fingerprint=? AND id=?",
+            values: [fingerprint, id]
+          ).first?[0] ?? "0"
+        let oldTokens =
+          try db.rows(
+            "SELECT COALESCE(SUM(length(CAST(payload AS BLOB))),0) FROM tokens WHERE fingerprint=? AND sentence_id=?",
+            values: [fingerprint, id]
+          ).first?[0] ?? "0"
+        let oldAnalysis =
+          try db.rows(
+            "SELECT length(CAST(payload AS BLOB)) FROM grammar_analyses WHERE fingerprint=? AND sentence_id=?",
+            values: [fingerprint, id]
+          ).first?[0] ?? "0"
+        delta -= (Int(oldSentence) ?? 0) + (Int(oldTokens) ?? 0) + (Int(oldAnalysis) ?? 0)
+        let record = try encode(StoredSentence(sentence))
+        delta += record.utf8.count
+        try db.execute(
+          "UPDATE sentences SET payload=? WHERE fingerprint=? AND id=?",
+          values: [record, fingerprint, id])
+        for token in sentence.tokens {
+          let payload = try encode(token)
+          delta += payload.utf8.count
+          try db.execute(
+            "UPDATE tokens SET payload=? WHERE fingerprint=? AND id=?",
+            values: [payload, fingerprint, token.id.uuidString])
+        }
+        if let analysis = sentence.grammarAnalysis {
+          let payload = try encode(analysis)
+          delta += payload.utf8.count
+          try db.execute(
+            "INSERT OR REPLACE INTO grammar_analyses VALUES(?,?,?)",
+            values: [fingerprint, id, payload])
+        } else {
+          try db.execute(
+            "DELETE FROM grammar_analyses WHERE fingerprint=? AND sentence_id=?",
+            values: [fingerprint, id])
+        }
+      }
+      try db.execute(
+        "UPDATE cache_entries SET size=size+?,accessed=? WHERE fingerprint=?",
+        values: [String(delta), String(Date().timeIntervalSince1970), fingerprint])
+      try db.execute("COMMIT")
+    } catch {
+      try? db.execute("ROLLBACK")
+      throw error
+    }
+    try evict(limit: limit, protecting: document.video.id)
+  }
   public func usage() throws -> Int {
     Int(try db.rows("SELECT COALESCE(SUM(size),0) FROM cache_entries").first?[0] ?? "0") ?? 0
   }

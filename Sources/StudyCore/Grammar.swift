@@ -29,7 +29,8 @@ extension GrammarProvider {
   }
 }
 public enum GrammarContract {
-  public static let promptVersion = 7, schemaVersion = 2, maxSentences = 8, maxInputTokens = 6000
+  public static let promptVersion = 7, schemaVersion = 2, wireVersion = 2, maxSentences = 8,
+    maxInputTokens = 6000
   public static let prompt = StructuredGrammar.prompt
   public static func payload(_ sentences: [Sentence], context: [Sentence] = []) throws -> String {
     try GrammarWindow(sentences: sentences, context: context).payload()
@@ -207,14 +208,17 @@ public enum GrammarContract {
     }
     return Inspection(valid: valid, invalid: invalid, feedback: feedback.joined(separator: "\n"))
   }
-  public static func batches(_ sentences: [Sentence]) -> [[Sentence]] {
+  public static func batches(_ sentences: [Sentence], maxSentences: Int = Self.maxSentences)
+    -> [[Sentence]]
+  {
     var result: [[Sentence]] = []
     var batch: [Sentence] = []
     var size = 0
     for sentence in sentences {
       let n = GrammarWindow.estimatedCost(sentence)
       if !batch.isEmpty,
-        batch.count >= maxSentences || size + n > maxInputTokens - GrammarWindow.contextBudget
+        batch.count >= max(1, maxSentences)
+          || size + n > maxInputTokens - GrammarWindow.contextBudget
       {
         result.append(batch)
         batch = []
@@ -232,7 +236,7 @@ public struct LocalGrammarProvider: GrammarProvider {
   public let session: URLSession
   public var usesClauseStructure: Bool { true }
   public var identity: String { "local:" + settings.baseURL }
-  public var concurrencyLimit: Int { 2 }
+  public var concurrencyLimit: Int { max(1, min(2, settings.localConcurrency)) }
   public init(settings: AppSettings, session: URLSession = .shared) {
     self.settings = settings
     self.session = session
@@ -297,6 +301,7 @@ public struct CodexGrammarProvider: GrammarProvider {
   public let settings: AppSettings
   public var usesClauseStructure: Bool { true }
   public var identity: String { "codex:" + settings.codexPath }
+  public var concurrencyLimit: Int { max(1, min(2, settings.codexConcurrency)) }
   public func cacheIdentity() async -> String {
     await Task.detached {
       let executable = (try? Executable.find("codex", explicit: settings.codexPath))?
@@ -365,7 +370,13 @@ public actor GrammarScheduler {
   let provider: any GrammarProvider
   let context: [Sentence]
   var queue: [Sentence] = [], pending = Set<UUID>(), failed = Set<UUID>()
+  var completed: [UUID: Analysis] = [:]
+  var inFlight: [String: Task<[Analysis], Error>] = [:]
+  var activeBatches: [String: [Sentence]] = [:]
+  var explicitRetries = Set<UUID>()
   var activeRequests = 0
+  public var workerLimit: Int { maximumConcurrentRequests }
+  public var hasQueuedWork: Bool { !queue.isEmpty }
   let maximumConcurrentRequests: Int
   public init(provider: any GrammarProvider, concurrencyLimit: Int? = nil, context: [Sentence] = [])
   {
@@ -374,9 +385,16 @@ public actor GrammarScheduler {
     maximumConcurrentRequests = max(1, concurrencyLimit ?? provider.concurrencyLimit)
   }
   public func enqueue(_ sentences: [Sentence], priority: Bool = false, retryFailed: Bool = false) {
-    if retryFailed { failed.subtract(sentences.map(\.id)) }
+    if retryFailed {
+      failed.subtract(sentences.map(\.id))
+      for sentence in sentences {
+        completed.removeValue(forKey: sentence.id)
+        explicitRetries.insert(sentence.id)
+      }
+    }
     let fresh = sentences.filter {
-      $0.grammarAnalysis == nil && !failed.contains($0.id) && pending.insert($0.id).inserted
+      $0.grammarAnalysis == nil && completed[$0.id] == nil && !failed.contains($0.id)
+        && pending.insert($0.id).inserted
     }
     if priority {
       queue.insert(contentsOf: fresh, at: 0)
@@ -387,12 +405,49 @@ public actor GrammarScheduler {
       queue += fresh
     }
   }
-  public func next() -> [Sentence] {
-    guard let batch = GrammarContract.batches(queue).first else { return [] }
+  @discardableResult public func focus(on sentences: [Sentence], cancelObsolete: Bool = false)
+    -> [Sentence]
+  {
+    let desired = Set(sentences.map(\.id)).union(explicitRetries)
+    if cancelObsolete {
+      for (key, batch) in activeBatches where batch.allSatisfy({ !desired.contains($0.id) }) {
+        inFlight[key]?.cancel()
+      }
+    }
+    let removed = queue.filter { !desired.contains($0.id) }
+    queue.removeAll { !desired.contains($0.id) }
+    pending.subtract(removed.map(\.id))
+    enqueue(sentences, priority: true)
+    return removed
+  }
+  public func next(maxSentences: Int = GrammarContract.maxSentences) -> [Sentence] {
+    guard let batch = GrammarContract.batches(queue, maxSentences: maxSentences).first else {
+      return []
+    }
     queue.removeFirst(batch.count)
     return batch
   }
   public func analyze(_ batch: [Sentence]) async throws -> [Analysis] {
+    if batch.allSatisfy({ completed[$0.id] != nil }) {
+      return batch.compactMap { completed[$0.id] }
+    }
+    let key = batch.map { $0.id.uuidString }.joined(separator: ":")
+    if let existing = inFlight[key] {
+      return try await withTaskCancellationHandler(
+        operation: { try await existing.value }, onCancel: { existing.cancel() })
+    }
+    let task = Task { try await self.performAnalysis(batch) }
+    inFlight[key] = task
+    activeBatches[key] = batch
+    defer {
+      inFlight.removeValue(forKey: key)
+      activeBatches.removeValue(forKey: key)
+    }
+    return try await withTaskCancellationHandler(
+      operation: { try await task.value }, onCancel: { task.cancel() })
+  }
+  func performAnalysis(_ batch: [Sentence]) async throws -> [Analysis] {
+    defer { finish(batch) }
     while activeRequests >= maximumConcurrentRequests {
       try await Task.sleep(nanoseconds: 20_000_000)
     }
@@ -402,8 +457,12 @@ public actor GrammarScheduler {
     if provider.usesClauseStructure {
       do {
         let window = GrammarWindow(sentences: batch, context: context)
+        let readingStart = ProcessInfo.processInfo.systemUptime
         let draft = try await provider.analyze(
           batch, context: context, repair: false, validationFeedback: nil)
+        try Task.checkCancellation()
+        let readingSeconds = ProcessInfo.processInfo.systemUptime - readingStart
+        StudyLog.grammar.info("Semantic reading: \(batch.count) units, \(readingSeconds) seconds")
         let feedback: String
         if let reading = try? JSONSerialization.jsonObject(with: draft) as? [String: Any],
           reading["clauses"] as? [Any] != nil
@@ -416,17 +475,28 @@ public actor GrammarScheduler {
             "JSON decoding: the semantic reading is missing its clauses array. Interpret the transcript and compile a complete schema 2 tree. Unusable reading:\n"
             + String(decoding: draft, as: UTF8.self)
         }
+        let compileStart = ProcessInfo.processInfo.systemUptime
         let audited = try await provider.analyze(
           batch, context: context, repair: true, validationFeedback: feedback)
+        try Task.checkCancellation()
+        let compileSeconds = ProcessInfo.processInfo.systemUptime - compileStart
+        let inputBytes = try window.payload().utf8.count
+        StudyLog.grammar.info(
+          "Clause audit: \(batch.count) units, \(inputBytes) input bytes, \(compileSeconds) seconds"
+        )
         let result: [Analysis]
         do { result = try StructuredGrammar.validate(audited, window: window) } catch {
           let failure = error as? AppFailure
+          let repairStart = ProcessInfo.processInfo.systemUptime
           let repaired = try await provider.analyze(
             batch, context: context, repair: true,
             validationFeedback:
               "The semantic audit has a structural defect. Preserve correct clauses and repair only the stated defect. "
               + (failure?.details ?? error.localizedDescription) + "\nAudited tree:\n"
               + String(decoding: audited, as: UTF8.self))
+          try Task.checkCancellation()
+          let repairSeconds = ProcessInfo.processInfo.systemUptime - repairStart
+          StudyLog.grammar.info("Structural repair: \(batch.count) units, \(repairSeconds) seconds")
           do { result = try StructuredGrammar.validate(repaired, window: window) } catch {
             let partial =
               (try? StructuredGrammar.recoverValidatedClauses(repaired, window: window)) ?? []
@@ -437,17 +507,20 @@ public actor GrammarScheduler {
             result = partial
           }
         }
-        finish(batch)
+        for analysis in result { completed[analysis.sentenceId] = analysis }
         return result
+      } catch is CancellationError {
+        throw CancellationError()
       } catch {
+        if Task.isCancelled { throw CancellationError() }
         failed.formUnion(batch.map(\.id))
-        finish(batch)
         throw error
       }
     }
     do {
       let data = try await provider.analyze(
         batch, context: context, repair: false, validationFeedback: nil)
+      try Task.checkCancellation()
       let first: GrammarContract.Inspection
       do { first = try GrammarContract.inspect(data, sentences: batch) } catch {
         let failure = error as? AppFailure
@@ -456,30 +529,36 @@ public actor GrammarScheduler {
           feedback: (failure?.message ?? "Invalid response") + "\n" + (failure?.details ?? ""))
       }
       if first.invalid.isEmpty {
-        finish(batch)
+        for analysis in first.valid { completed[analysis.sentenceId] = analysis }
         return first.valid
       }
       do {
         let repaired = try await provider.analyze(
           first.invalid, context: context, repair: true, validationFeedback: first.feedback)
+        try Task.checkCancellation()
         let second = try GrammarContract.inspect(repaired, sentences: first.invalid)
         failed.formUnion(second.invalid.map(\.id))
-        finish(batch)
         let results = first.valid + second.valid
+        for analysis in results { completed[analysis.sentenceId] = analysis }
         return batch.compactMap { sentence in results.first { $0.sentenceId == sentence.id } }
       } catch is CancellationError { throw CancellationError() } catch {
         failed.formUnion(first.invalid.map(\.id))
         if !first.valid.isEmpty {
-          finish(batch)
+          for analysis in first.valid { completed[analysis.sentenceId] = analysis }
           return first.valid
         }
         throw error
       }
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
+      if Task.isCancelled { throw CancellationError() }
       failed.formUnion(batch.map(\.id))
-      finish(batch)
       throw error
     }
   }
-  func finish(_ batch: [Sentence]) { pending.subtract(batch.map(\.id)) }
+  func finish(_ batch: [Sentence]) {
+    pending.subtract(batch.map(\.id))
+    explicitRetries.subtract(batch.map(\.id))
+  }
 }
