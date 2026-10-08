@@ -84,8 +84,7 @@ public actor StudyStore {
   public init(directory: URL? = nil) throws {
     let root =
       directory
-      ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("YouTubeEnglishStudy")
+      ?? AppSettings.defaultCacheURL
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     db = try SQLiteDatabase(url: root.appendingPathComponent("video-cache.sqlite"))
     try db.execute("PRAGMA foreign_keys=ON")

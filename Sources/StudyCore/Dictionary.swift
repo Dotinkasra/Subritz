@@ -306,10 +306,21 @@ public enum APISecret {
       kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
       kSecAttrAccount as String: "apiKey",
     ]
-    SecItemDelete(q as CFDictionary)
-    if key.isEmpty { return }
+    if key.isEmpty {
+      let status = SecItemDelete(q as CFDictionary)
+      guard status == errSecSuccess || status == errSecItemNotFound else {
+        throw AppFailure("API キーを Keychain から削除できませんでした")
+      }
+      return
+    }
+    let data = Data(key.utf8)
+    let status = SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+    if status == errSecSuccess { return }
+    guard status == errSecItemNotFound else {
+      throw AppFailure("API キーを Keychain に保存できませんでした")
+    }
     var item = q
-    item[kSecValueData as String] = Data(key.utf8)
+    item[kSecValueData as String] = data
     guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else {
       throw AppFailure("API キーを Keychain に保存できませんでした")
     }

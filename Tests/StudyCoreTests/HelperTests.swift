@@ -26,8 +26,11 @@ struct HelperTests {
     settings.model = " GPT-6-Luna "
     #expect(settings.grammarModel == "gpt-6-luna")
     settings.provider = "local"
-    #expect(settings.grammarModel == "GPT-6-Luna")
+    #expect(settings.grammarModel.isEmpty)
+    settings.model = "Local-Model"
+    #expect(settings.grammarModel == "Local-Model")
     settings.provider = "codex"
+    #expect(settings.grammarModel == "gpt-6-luna")
     settings.model = ""
     #expect(settings.grammarModel.isEmpty)
   }

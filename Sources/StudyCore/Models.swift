@@ -110,27 +110,66 @@ public enum YouTubeURL {
     return value
   }
 }
-public struct AppSettings: Codable, Sendable {
+public struct AppSettings: Codable, Sendable, Equatable {
   public var ytDlpPath = ""
   public var codexPath = ""
   public var dictionary = "macOS"
   public var provider = "local"
   public var baseURL = "http://localhost:1234/v1"
-  public var model = ""
+  public var localModel = ""
+  public var codexModel = ""
+  public var cacheDirectory = ""
+  // Compatibility for callers using the active provider's model.
+  public var model: String {
+    get { provider == "codex" ? codexModel : localModel }
+    set { if provider == "codex" { codexModel = newValue } else { localModel = newValue } }
+  }
   public var grammarModel: String {
     let name = model.trimmingCharacters(in: .whitespacesAndNewlines)
     return provider == "codex" && name.lowercased().hasPrefix("gpt-") ? name.lowercased() : name
   }
+  public var cacheURL: URL {
+    cacheDirectory.isEmpty
+      ? Self.defaultCacheURL : URL(fileURLWithPath: cacheDirectory, isDirectory: true)
+  }
+  public static var defaultCacheURL: URL {
+    FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("YouTubeEnglishStudy", isDirectory: true)
+  }
   public var timeout: Double = 120
   public var cacheMB = 1024
   public init() {}
-  public static func load() -> Self {
-    (UserDefaults.standard.data(forKey: "settings").flatMap {
+  enum CodingKeys: String, CodingKey {
+    case ytDlpPath, codexPath, dictionary, provider, baseURL, localModel, codexModel,
+      cacheDirectory, timeout, cacheMB
+  }
+  enum LegacyKeys: String, CodingKey { case model }
+  public init(from decoder: Decoder) throws {
+    self.init()
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    ytDlpPath = try c.decodeIfPresent(String.self, forKey: .ytDlpPath) ?? ytDlpPath
+    codexPath = try c.decodeIfPresent(String.self, forKey: .codexPath) ?? codexPath
+    dictionary = try c.decodeIfPresent(String.self, forKey: .dictionary) ?? dictionary
+    provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? provider
+    baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? baseURL
+    localModel = try c.decodeIfPresent(String.self, forKey: .localModel) ?? localModel
+    codexModel = try c.decodeIfPresent(String.self, forKey: .codexModel) ?? codexModel
+    cacheDirectory = try c.decodeIfPresent(String.self, forKey: .cacheDirectory) ?? cacheDirectory
+    timeout = try c.decodeIfPresent(Double.self, forKey: .timeout) ?? timeout
+    cacheMB = try c.decodeIfPresent(Int.self, forKey: .cacheMB) ?? cacheMB
+    let old = try decoder.container(keyedBy: LegacyKeys.self)
+    if let legacy = try old.decodeIfPresent(String.self, forKey: .model) {
+      if provider == "codex", !c.contains(.codexModel) { codexModel = legacy }
+      if provider != "codex", !c.contains(.localModel) { localModel = legacy }
+    }
+  }
+  public static func load(defaults: UserDefaults = .standard) -> Self {
+    (defaults.data(forKey: "settings").flatMap {
       try? JSONDecoder().decode(Self.self, from: $0)
     }) ?? Self()
   }
-  public func save() {
-    UserDefaults.standard.set(try? JSONEncoder().encode(self), forKey: "settings")
+  public func save(defaults: UserDefaults = .standard) {
+    defaults.set(try? JSONEncoder().encode(self), forKey: "settings")
   }
 }
 

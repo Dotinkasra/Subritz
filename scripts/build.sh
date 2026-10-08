@@ -10,9 +10,14 @@ if [[ -d /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ]]; then
 fi
 swift build --disable-sandbox --build-system native "${SDK_ARGS[@]}" "$@"
 BIN_DIR=$(swift build --disable-sandbox --build-system native "${SDK_ARGS[@]}" "$@" --show-bin-path)
-APP="$PWD/dist/YouTubeEnglishStudy.app"
+APP="$PWD/dist/Subritz.app"
+if [[ -d "$PWD/dist/YouTubeEnglishStudy.app" && ! -d "$APP" ]]; then
+ mv "$PWD/dist/YouTubeEnglishStudy.app" "$APP"
+fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN_DIR/YouTubeEnglishStudy" "$APP/Contents/MacOS/YouTubeEnglishStudy"
+cp "$BIN_DIR/Subritz" "$APP/Contents/MacOS/Subritz"
+rm -f "$APP/Contents/MacOS/YouTubeEnglishStudy"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
+cp -R scripts/Resources/. "$APP/Contents/Resources/"
 codesign --force --sign - "$APP"
 echo "$APP"

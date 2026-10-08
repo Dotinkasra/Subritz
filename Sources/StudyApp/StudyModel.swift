@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor final class StudyModel: ObservableObject {
   @Published var url = ""
-  @Published var settings = AppSettings.load()
+  @Published var settings = AppSettings()
   @Published var phase: VideoLoadPhase = .idle
   @Published var stage = "YouTube の英語動画 URL を入力してください"
   @Published var error: String?
@@ -28,6 +28,19 @@ import SwiftUI
   @Published var cacheUsage = 0
   @Published var eijiroCount = 0
   @Published var settingsMessage = ""
+  @Published var isImportingDictionary = false
+  @Published var isRemovingDictionary = false
+  @Published var dictionaryMessage = ""
+  @Published var isChangingCacheDirectory = false
+  @Published var cacheMessage = ""
+  @Published var confirmCloseVideo = false
+  let defaults: UserDefaults
+  var apiKeyTask: Task<Void, Never>?
+  var pendingAPIKey: String?
+  var dictionaryOperation: Task<Void, Never>?
+  var cacheOperation: Task<Void, Never>?
+  var dictionaryBusy: Bool { isImportingDictionary || isRemovingDictionary }
+  var hasOpenVideo: Bool { loading || ready || document != nil }
   let bridge = PlayerBridge()
   var storageTask: Task<(StudyStore, EijiroProvider), Error>?
   var store: StudyStore?
@@ -46,11 +59,14 @@ import SwiftUI
   var selectedDictionaryID: UUID?
   var lastPriorityTime: Double = -300
   var activeSentenceIndex: Int?
-  init(prepareStorage: Bool = true) {
+  init(prepareStorage: Bool = true, defaults: UserDefaults = .standard) {
+    self.defaults = defaults
+    settings = AppSettings.load(defaults: defaults)
     bridge.onTime = { [weak self] t, d, s in self?.update(time: t, duration: d, state: s) }
     bridge.onError = { [weak self] message in self?.error = message }
     guard prepareStorage else { return }
-    storageTask = Task.detached { (try StudyStore(), try EijiroProvider()) }
+    let directory = settings.cacheURL
+    storageTask = Task.detached { (try StudyStore(directory: directory), try EijiroProvider()) }
     Task {
       do {
         let stores = try await storageTask!.value
@@ -61,6 +77,7 @@ import SwiftUI
     }
   }
   func load() {
+    guard !isChangingCacheDirectory else { return }
     phase = .validatingURL
     let id: String
     do { id = try YouTubeURL.id(url) } catch {
@@ -407,68 +424,165 @@ import SwiftUI
       }
     }
   }
-  func saveSettings(apiKey: String) {
-    guard settings.timeout >= 5, settings.timeout <= 3600 else {
-      settingsMessage = "タイムアウトは 5〜3600 秒を指定してください"
+  func closeVideo() {
+    loadTask?.cancel()
+    backgroundTask?.cancel()
+    dictionaryTask?.cancel()
+    dictionaryPrefetchTask?.cancel()
+    bridge.pause()
+    bridge.stopClock()
+    session = UUID()
+    scheduler = nil
+    backgroundRunning = false
+    loading = false
+    ready = false
+    playing = false
+    document = nil
+    timeline = nil
+    currentSentence = nil
+    currentToken = nil
+    hoverToken = nil
+    pinnedToken = nil
+    dictionaryEntry = nil
+    dictionaryLoading = false
+    selectedDictionaryID = nil
+    activeSentenceIndex = nil
+    currentLineIndex = 0
+    fingerprint = ""
+    lastPriorityTime = -300
+    time = 0
+    duration = 0
+    error = nil
+    errorDetails = nil
+    grammarError = nil
+    grammarErrorDetails = nil
+    phase = .idle
+    stage = "YouTube の英語動画 URL を入力してください"
+    confirmCloseVideo = false
+  }
+  func saveSettings(previous: AppSettings? = nil) {
+    guard settings.timeout.isFinite, (5...3600).contains(settings.timeout) else {
+      settingsMessage = "タイムアウトは5〜3600秒で指定してください。この変更は未保存です。"
       return
     }
-    do {
-      try APISecret.save(apiKey)
-      settings.model = settings.grammarModel
-      settings.save()
-      dictionaryCache.removeAll()
-      dictionaryMisses.removeAll()
-      dictionaryPrefetchTask?.cancel()
-      selectedDictionaryID = nil
-      lookup()
-      settingsMessage = "設定を保存しました"
+    settings.save(defaults: defaults)
+    settingsMessage = "変更は自動で保存されます"
+    if previous?.dictionary != settings.dictionary {
+      invalidateDictionary()
+    }
+    if previous?.cacheMB != settings.cacheMB {
       Task {
         do {
           try await store?.evict(
             limit: settings.cacheMB * 1024 * 1024, protecting: document?.video.id)
           await refreshStorage()
-        } catch { settingsMessage = error.localizedDescription }
+        } catch { cacheMessage = error.localizedDescription }
       }
+    }
+  }
+  func scheduleAPIKeySave(_ key: String) {
+    pendingAPIKey = key
+    apiKeyTask?.cancel()
+    apiKeyTask = Task {
+      do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+      flushAPIKey()
+    }
+  }
+  func flushAPIKey() {
+    apiKeyTask?.cancel()
+    guard let key = pendingAPIKey else { return }
+    do {
+      try APISecret.save(key)
+      pendingAPIKey = nil
+      settingsMessage = "変更は自動で保存されます"
     } catch { settingsMessage = error.localizedDescription }
+  }
+  func invalidateDictionary() {
+    dictionaryTask?.cancel()
+    dictionaryPrefetchTask?.cancel()
+    dictionaryCache.removeAll()
+    dictionaryMisses.removeAll()
+    selectedDictionaryID = nil
+    lookup()
+  }
+  func changeCacheDirectory(to directory: URL?) {
+    guard !isChangingCacheDirectory else { return }
+    let path = directory?.standardizedFileURL.path ?? ""
+    guard path != settings.cacheDirectory else { return }
+    isChangingCacheDirectory = true
+    cacheMessage = "キャッシュの保存先を変更しています…"
+    let target = directory ?? AppSettings.defaultCacheURL
+    cacheOperation = Task {
+      defer { isChangingCacheDirectory = false }
+      do {
+        // Wait for startup before replacing the active store.
+        _ = try? await storageTask?.value
+        let newStore = try await Task.detached { try StudyStore(directory: target) }.value
+        let dictionary: EijiroProvider
+        if let existing = eijiro {
+          dictionary = existing
+        } else {
+          dictionary = try await Task.detached { try EijiroProvider() }.value
+        }
+        if let document {
+          try await newStore.save(
+            document, fingerprint: fingerprint, limit: settings.cacheMB * 1024 * 1024)
+        }
+        store = newStore
+        eijiro = dictionary
+        if error?.hasPrefix("永続データを開けませんでした") == true { error = nil }
+        settings.cacheDirectory = path
+        settings.save(defaults: defaults)
+        await refreshStorage()
+        cacheMessage = "保存先を変更しました。既存のキャッシュは元の場所に残ります。"
+      } catch { cacheMessage = "保存先を変更できませんでした：" + error.localizedDescription }
+    }
   }
   func refreshStorage() async {
     cacheUsage = (try? await store?.usage()) ?? 0
     eijiroCount = (try? await eijiro?.count()) ?? 0
   }
   func importDictionary(_ url: URL) {
-    settingsMessage = "英辞郎データをインポートしています…"
-    Task {
+    guard !dictionaryBusy else { return }
+    isImportingDictionary = true
+    dictionaryMessage = "英辞郎データをインポートしています…"
+    dictionaryOperation = Task {
+      defer { isImportingDictionary = false }
       let granted = url.startAccessingSecurityScopedResource()
       defer { if granted { url.stopAccessingSecurityScopedResource() } }
       do {
-        let n = try await eijiro?.importFile(url)
-        settingsMessage = "\(n ?? 0) 項目をインポートしました"
-        dictionaryCache.removeAll()
-        dictionaryMisses.removeAll()
-        dictionaryPrefetchTask?.cancel()
+        if eijiro == nil, let storageTask { eijiro = try await storageTask.value.1 }
+        guard let eijiro else { throw AppFailure("辞書データベースが準備できていません") }
+        let n = try await eijiro.importFile(url)
+        invalidateDictionary()
         await refreshStorage()
-      } catch { settingsMessage = error.localizedDescription }
+        dictionaryMessage = "\(n)項目をインポートしました"
+      } catch { dictionaryMessage = "インポートできませんでした：" + error.localizedDescription }
     }
   }
   func removeDictionary() {
-    Task {
+    guard !dictionaryBusy else { return }
+    isRemovingDictionary = true
+    dictionaryMessage = "英辞郎データを削除しています…"
+    dictionaryOperation = Task {
+      defer { isRemovingDictionary = false }
       do {
-        try await eijiro?.remove()
-        dictionaryCache.removeAll()
-        dictionaryMisses.removeAll()
-        dictionaryPrefetchTask?.cancel()
+        guard let eijiro else { throw AppFailure("辞書データベースが準備できていません") }
+        try await eijiro.remove()
+        invalidateDictionary()
         await refreshStorage()
-        settingsMessage = "英辞郎データを削除しました"
-      } catch { settingsMessage = error.localizedDescription }
+        dictionaryMessage = "英辞郎データを削除しました"
+      } catch { dictionaryMessage = error.localizedDescription }
     }
   }
   func clearCache() {
+    guard !isChangingCacheDirectory else { return }
     Task {
       do {
         try await store?.clear()
         await refreshStorage()
-        settingsMessage = "動画キャッシュを削除しました"
-      } catch { settingsMessage = error.localizedDescription }
+        cacheMessage = "動画キャッシュを削除しました"
+      } catch { cacheMessage = error.localizedDescription }
     }
   }
 }

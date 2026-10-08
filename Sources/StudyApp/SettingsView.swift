@@ -1,82 +1,130 @@
+import AppKit
 import StudyCore
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
   @ObservedObject var model: StudyModel
-  @Environment(\.dismiss) var dismiss
   @State private var apiKey = APISecret.read()
-  @State private var importing = false
+  @State private var choosingDictionary = false
+  @State private var window = WindowReference()
   var body: some View {
-    VStack {
-      HStack {
-        Text("設定").font(.title2.bold())
-        Spacer()
-        Button("閉じる") { dismiss() }
-      }.padding()
+    VStack(spacing: 0) {
       Form {
         Section("一般") {
-          TextField("yt-dlp 実行ファイル（空欄で自動検出）", text: $model.settings.ytDlpPath)
-          Picker("動画キャッシュ上限", selection: $model.settings.cacheMB) {
+          TextField("yt-dlp 実行ファイル", text: $model.settings.ytDlpPath)
+          Text("空欄の場合は自動検出します。").font(.caption).foregroundStyle(.secondary)
+        }
+        Section("動画キャッシュ") {
+          Picker("容量の上限", selection: $model.settings.cacheMB) {
             ForEach([256, 512, 1024, 2048, 5120], id: \.self) { Text("\($0) MB").tag($0) }
           }
-          HStack {
-            Text("現在 \(model.cacheUsage/1024/1024) MB")
-            Spacer()
-            Button("動画キャッシュを削除") { model.clearCache() }
+          LabeledContent("保存先") {
+            Text(model.settings.cacheURL.path).font(.caption).textSelection(.enabled)
+              .lineLimit(2).truncationMode(.middle).frame(maxWidth: 390, alignment: .trailing)
           }
+          HStack {
+            Button("保存先を選択…") { chooseCacheDirectory() }
+            Button("標準の保存先に戻す") { model.changeCacheDirectory(to: nil) }
+              .disabled(model.settings.cacheDirectory.isEmpty)
+            Spacer()
+            if model.isChangingCacheDirectory { ProgressView().controlSize(.small) }
+          }.disabled(model.isChangingCacheDirectory)
+          HStack {
+            Text("使用量：\(model.cacheUsage/1024/1024) MB").foregroundStyle(.secondary)
+            Spacer()
+            Button("キャッシュを削除") { model.clearCache() }
+              .disabled(model.isChangingCacheDirectory)
+          }
+          if !model.cacheMessage.isEmpty {
+            Text(model.cacheMessage).font(.caption).foregroundStyle(.secondary)
+          }
+          Text("保存先の変更後も、以前のキャッシュは元のフォルダに残ります。英辞郎データの保存先は変わりません。")
+            .font(.caption).foregroundStyle(.secondary)
         }
         Section("辞書") {
-          Picker("辞書 Provider", selection: $model.settings.dictionary) {
+          Picker("使用する辞書", selection: $model.settings.dictionary) {
             Text("macOS 標準辞書").tag("macOS")
             Text("英辞郎").tag("eijiro")
           }
-          Text("英辞郎：\(model.eijiroCount) 項目").foregroundStyle(.secondary)
           HStack {
-            Button("英辞郎をインポート / 再インポート") { importing = true }
-            Button("英辞郎を削除") { model.removeDictionary() }
+            Text("英辞郎：\(model.eijiroCount)項目").foregroundStyle(.secondary)
+            Spacer()
+            Button("インポート…") { choosingDictionary = true }
+              .disabled(choosingDictionary || model.dictionaryBusy)
+            Button("削除") { model.removeDictionary() }
+              .disabled(model.dictionaryBusy || model.eijiroCount == 0)
           }
-          Text("ご自身が所有する英辞郎テキストデータを指定してください。macOS 辞書の日本語語義は OS の辞書設定に依存します。").font(.caption)
-            .foregroundStyle(.secondary)
+          if model.dictionaryBusy {
+            HStack {
+              ProgressView().controlSize(.small)
+              Text(model.isImportingDictionary ? "英辞郎をインポート中…" : "英辞郎を削除中…")
+            }.accessibilityElement(children: .combine)
+          }
+          if !model.dictionaryMessage.isEmpty {
+            Text(model.dictionaryMessage).font(.caption).foregroundStyle(.secondary)
+          }
+          Text("ご自身が所有する英辞郎テキストを指定してください。macOS辞書の日本語語義はOSの辞書設定に依存します。")
+            .font(.caption).foregroundStyle(.secondary)
         }
-        Section("文法 / LLM") {
-          Picker("Provider", selection: $model.settings.provider) {
+        Section("文法解析") {
+          Picker("解析サービス", selection: $model.settings.provider) {
             Text("OpenAI 互換ローカル LLM").tag("local")
             Text("Codex CLI").tag("codex")
           }
           if model.settings.provider == "local" {
             TextField("Base URL", text: $model.settings.baseURL)
-            SecureField("API key（任意・Keychain に保存）", text: $apiKey)
-            Text("字幕の英文を上記 endpoint へ送信します。").font(.caption).foregroundStyle(.secondary)
+            TextField("ローカル LLM のモデル名", text: $model.settings.localModel)
+            SecureField("API key（任意）", text: $apiKey)
+            Text("API keyはKeychainに保存します。字幕の英文を上記URLへ送信します。")
+              .font(.caption).foregroundStyle(.secondary)
           } else {
-            TextField("Codex 実行ファイル（空欄で自動検出）", text: $model.settings.codexPath)
-            Text("字幕の英文を認証済み Codex CLI へ送信します。事前にターミナルで認証してください。").font(.caption).foregroundStyle(
-              .secondary)
+            TextField("Codex 実行ファイル", text: $model.settings.codexPath)
+            TextField("Codex のモデル名", text: $model.settings.codexModel)
+            Text("実行ファイルとモデル名は空欄でCLIの設定を使用します。モデルIDはgpt-6-lunaなどを指定してください。事前にターミナルで認証が必要です。")
+              .font(.caption).foregroundStyle(.secondary)
           }
-          TextField("モデル名（Codex は空欄で CLI の設定を使用）", text: $model.settings.model)
-          if model.settings.provider == "codex" {
-            Text("モデル ID は gpt-6-luna のような小文字の識別子を指定します。空欄なら認証済み CLI の設定を使用します。").font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          HStack {
-            Text("タイムアウト（秒）")
-            TextField("秒", value: $model.settings.timeout, format: .number).frame(width: 100)
-          }
-          Text("Provider の変更は次回の動画読み込みから反映します。").font(.caption).foregroundStyle(.secondary)
+          TextField("タイムアウト（秒）", value: $model.settings.timeout, format: .number)
+          Text("5〜3600秒。解析サービスの変更は次の動画読み込みから反映します。モデル名はサービスごとに保存します。")
+            .font(.caption).foregroundStyle(.secondary)
         }
-      }.formStyle(.grouped)
+      }.formStyle(.grouped).textFieldStyle(.roundedBorder)
+      Divider()
       HStack {
-        Text(model.settingsMessage).font(.caption)
+        Text(model.settingsMessage.isEmpty ? "変更は自動で保存されます" : model.settingsMessage)
+          .font(.caption).foregroundStyle(.secondary)
         Spacer()
-        Button("保存") { model.saveSettings(apiKey: apiKey) }.buttonStyle(.borderedProminent)
-      }.padding()
-    }.frame(width: 690, height: 720).fileImporter(
-      isPresented: $importing, allowedContentTypes: [.plainText, .data]
-    ) { result in
-      switch result {
-      case .success(let url): model.importDictionary(url)
-      case .failure(let error): model.settingsMessage = error.localizedDescription
+        Button("閉じる") {
+          model.flushAPIKey()
+          window.value?.close()
+        }.keyboardShortcut(.cancelAction)
+      }.padding(16)
+    }.frame(width: 720, height: 780)
+      .background(SettingsWindowTitle(window: window).frame(width: 0, height: 0))
+      .onChange(of: model.settings) { old, _ in model.saveSettings(previous: old) }
+      .onChange(of: apiKey) { _, key in model.scheduleAPIKeySave(key) }
+      .onDisappear { model.flushAPIKey() }
+      .fileImporter(isPresented: $choosingDictionary, allowedContentTypes: [.plainText, .data]) {
+        result in
+        switch result {
+        case .success(let url): model.importDictionary(url)
+        case .failure(let error): model.dictionaryMessage = error.localizedDescription
+        }
+      }.task { await model.refreshStorage() }
+  }
+  func chooseCacheDirectory() {
+    let panel = NSOpenPanel()
+    panel.title = "動画キャッシュの保存先"
+    panel.prompt = "選択"
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.canCreateDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.directoryURL = model.settings.cacheURL
+    if let window = window.value {
+      panel.beginSheetModal(for: window) { response in
+        if response == .OK, let url = panel.url { model.changeCacheDirectory(to: url) }
       }
-    }.task { await model.refreshStorage() }
+    }
   }
 }

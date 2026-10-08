@@ -3,24 +3,34 @@ import SwiftUI
 
 @main struct StudyApp: App {
   @StateObject private var model = StudyModel()
+  @NSApplicationDelegateAdaptor(AppLifecycle.self) private var lifecycle
   var body: some Scene {
-    WindowGroup { MainView(model: model).frame(minWidth: 1100, minHeight: 700) }
+    Window("Subritz", id: "main") {
+      MainView(model: model).frame(minWidth: 1100, minHeight: 700)
+        .background(MainWindowLifecycle(model: model).frame(width: 0, height: 0))
+        .onAppear { lifecycle.model = model }
+    }.commands { SubritzCommands(model: model) }
     Settings { SettingsView(model: model) }
   }
 }
 struct MainView: View {
   @ObservedObject var model: StudyModel
+  @Environment(\.openSettings) private var openSettings
   var body: some View {
     VStack(spacing: 0) {
       HStack {
         Image(systemName: "play.rectangle.fill").foregroundStyle(.red)
-        Text("YouTube 英語学習").font(.headline)
+        Text("Subritz").font(.headline)
         Spacer()
-        TextField("https://www.youtube.com/watch?v=…", text: $model.url).textFieldStyle(
-          .roundedBorder
-        ).frame(maxWidth: 520).onSubmit { model.load() }
-        Button(model.loading ? "別の動画を読み込む" : "読み込む") { model.load() }.keyboardShortcut(
-          .return, modifiers: .command)
+        if model.hasOpenVideo {
+          Button("動画を閉じる", systemImage: "xmark") { model.confirmCloseVideo = true }
+        } else {
+          TextField("https://www.youtube.com/watch?v=…", text: $model.url)
+            .textFieldStyle(.roundedBorder).frame(maxWidth: 520).onSubmit { model.load() }
+            .disabled(model.isChangingCacheDirectory)
+          Button("読み込む") { model.load() }.keyboardShortcut(.return, modifiers: .command)
+            .disabled(model.isChangingCacheDirectory)
+        }
         Button {
           model.showSettings = true
         } label: {
@@ -80,7 +90,7 @@ struct MainView: View {
             Image(systemName: "exclamationmark.triangle")
             Text(error)
             Spacer()
-            Button("再試行") { model.load() }
+            if !model.ready { Button("再試行") { model.load() } }
             Button("設定") { model.showSettings = true }
           }.foregroundStyle(.red)
           if let details = model.errorDetails { ErrorDetails(text: details) }
@@ -91,7 +101,19 @@ struct MainView: View {
         Spacer()
         if model.ready { Text("自動生成英語字幕 · ローカル辞書").foregroundStyle(.secondary) }
       }.font(.caption).padding(10)
-    }.sheet(isPresented: $model.showSettings) { SettingsView(model: model) }
+    }
+    .onChange(of: model.showSettings) { _, shown in
+      if shown {
+        openSettings()
+        model.showSettings = false
+      }
+    }
+    .alert("本当に動画を閉じますか？", isPresented: $model.confirmCloseVideo) {
+      Button("キャンセル", role: .cancel) {}
+      Button("動画を閉じる", role: .destructive) { model.closeVideo() }
+    } message: {
+      Text("字幕の解析と再生を終了し、URL入力画面に戻ります。保存済みのキャッシュは残ります。")
+    }
   }
   func timestamp(_ t: Double) -> String {
     let n = Int(max(0, t))

@@ -2,8 +2,8 @@
 import PackageDescription
 
 let package = Package(
-  name: "YouTubeEnglishStudy", platforms: [.macOS(.v15)],
-  products: [.executable(name: "YouTubeEnglishStudy", targets: ["StudyApp"])],
+  name: "Subritz", platforms: [.macOS(.v15)],
+  products: [.executable(name: "Subritz", targets: ["StudyApp"])],
   targets: [
     .systemLibrary(name: "CSQLite", path: "Sources/CSQLite"),
     .target(name: "StudyCore", dependencies: ["CSQLite"], swiftSettings: [.swiftLanguageMode(.v5)]),
