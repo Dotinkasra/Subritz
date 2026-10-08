@@ -1,0 +1,1 @@
+{"events": [{"tStartMs": 0, "dDurationMs": 2000, "segs": [{"utf8": "hello world"}]}, {"tStartMs": 1000, "dDurationMs": 2000, "segs": [{"utf8": "world again."}]}]}
