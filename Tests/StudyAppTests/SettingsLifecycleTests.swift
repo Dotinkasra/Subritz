@@ -38,6 +38,20 @@ import Testing
     model.saveSettings(previous: model.settings)
     #expect(AppSettings.load(defaults: defaults).timeout == 90)
   }
+  @Test func grammarOptOutPersistsIndependentlyOfUnfinishedSettings() throws {
+    let (model, defaults, suite) = try isolatedModel()
+    defer { defaults.removePersistentDomain(forName: suite) }
+    model.settings.timeout = 60
+    model.settings.codexModel = "saved-model"
+    model.saveSettings()
+    model.settings.timeout = 0
+    model.setAIGrammarEnabled(false)
+    let reloaded = StudyModel(prepareStorage: false, defaults: defaults)
+    #expect(!reloaded.settings.aiGrammarEnabled)
+    #expect(reloaded.settings.timeout == 60 && reloaded.settings.codexModel == "saved-model")
+    model.setAIGrammarEnabled(true)
+    #expect(AppSettings.load(defaults: defaults).aiGrammarEnabled)
+  }
   @Test func closeVideoCancelsWorkAndClearsPlaybackSelection() throws {
     let (model, words) = try DictionaryPinTests().fixture(realtime: false)
     model.pinDictionary(words[0])

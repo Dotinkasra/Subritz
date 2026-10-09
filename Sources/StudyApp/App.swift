@@ -27,6 +27,8 @@ struct MainView: View {
         Text("Subritz").font(.headline)
         Spacer()
         if model.hasOpenVideo {
+          Text(model.grammarEnabledForVideo ? "AI文法解析 ON" : "AI文法解析 OFF")
+            .font(.caption).foregroundStyle(.secondary)
           Button("動画を閉じる", systemImage: "xmark") { model.confirmCloseVideo = true }
         } else {
           TextField("https://www.youtube.com/watch?v=…", text: $model.url)
@@ -34,6 +36,7 @@ struct MainView: View {
             .disabled(model.isChangingCacheDirectory)
           Button("読み込む") { model.load() }.keyboardShortcut(.return, modifiers: .command)
             .disabled(model.isChangingCacheDirectory)
+          GrammarLoadOption(model: model)
         }
         Button("動画履歴", systemImage: "clock") {
           model.librarySection = .history
@@ -90,7 +93,7 @@ struct MainView: View {
         }.padding()
         Spacer()
       }
-      if model.ready, let error = model.grammarError {
+      if model.ready, model.grammarEnabledForVideo, let error = model.grammarError {
         VStack(alignment: .leading, spacing: 8) {
           HStack {
             Text("文法解析：" + error).font(.callout).foregroundStyle(.orange)
@@ -138,6 +141,17 @@ struct MainView: View {
   func timestamp(_ t: Double) -> String {
     let n = Int(max(0, t))
     return String(format: "%d:%02d", n / 60, n % 60)
+  }
+}
+struct GrammarLoadOption: View {
+  @ObservedObject var model: StudyModel
+  var body: some View {
+    Toggle("AI文法解析", isOn: Binding(
+      get: { model.settings.aiGrammarEnabled }, set: { model.setAIGrammarEnabled($0) }
+    ))
+    .toggleStyle(.checkbox).fixedSize()
+    .disabled(model.hasOpenVideo || model.isChangingCacheDirectory)
+    .help("OFFの場合、AIへ字幕を送らず、文法の下線・ラベルを表示しません。動画・字幕・辞書は使えます。")
   }
 }
 struct ErrorDetails: View {
@@ -319,7 +333,7 @@ struct SubtitlePane: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
-        Text("字幕 / 文法").font(.headline)
+        Text(model.grammarEnabledForVideo ? "字幕 / 文法" : "字幕").font(.headline)
         Spacer()
         Text(model.playing ? "再生位置に追従" : "過去・未来へスクロールできます")
           .font(.caption).foregroundStyle(.secondary)
@@ -374,7 +388,7 @@ struct SubtitleLineView: View {
                 .stroke(model.pinnedToken?.id == token.id ? Color.orange : .clear, lineWidth: 1.5)
                 .allowsHitTesting(false)
             }
-            if abs(line.index - model.currentLineIndex) <= 1 {
+            if model.grammarEnabledForVideo, abs(line.index - model.currentLineIndex) <= 1 {
               ForEach(Array(spans(token).enumerated()), id: \.offset) { _, span in
                 VStack(spacing: 2) {
                   Underline(role: span.role).frame(height: 5)
@@ -391,7 +405,7 @@ struct SubtitleLineView: View {
           }
         }
       }
-      if current, let sentence = model.currentSentence {
+      if model.grammarEnabledForVideo, current, let sentence = model.currentSentence {
         if let analysis = sentence.grammarAnalysis, let clauses = analysis.clauses {
           let complete = clauses.filter { $0.status == .COMPLETE && $0.parentID == nil }
           let patterns = Array(Set(complete.map { $0.pattern.rawValue })).sorted()
@@ -441,7 +455,8 @@ struct SubtitleLineView: View {
       .foregroundStyle(current ? .primary : .secondary)
   }
   func spans(_ token: Token) -> [Span] {
-    guard let sentence = model.document?.sentences.first(where: { $0.id == token.sentenceID }),
+    guard model.grammarEnabledForVideo,
+      let sentence = model.document?.sentences.first(where: { $0.id == token.sentenceID }),
       let analysis = sentence.grammarAnalysis
     else { return [] }
     return analysis.displaySpans(at: token.index)

@@ -10,6 +10,7 @@ import SwiftUI
   @Published var grammarError: String?
   @Published var errorDetails: String?
   @Published var grammarErrorDetails: String?
+  @Published var grammarEnabledForVideo = true
   @Published var dictionaryLoading = false
   @Published var ready = false
   @Published var loading = false
@@ -45,6 +46,7 @@ import SwiftUI
   var libraryStartup: Task<LibraryStore, Error>?
   var libraryOperation: Task<Void, Never>?
   var youtubeProviderOverride: (any YouTubeProvider)?
+  var grammarProviderOverride: (any GrammarProvider)?
   let defaults: UserDefaults
   var apiKeyTask: Task<Void, Never>?
   var pendingAPIKey: String?
@@ -99,6 +101,7 @@ import SwiftUI
     loadTask?.cancel()
     backgroundTask?.cancel()
     backgroundRunning = false
+    scheduler = nil
     dictionaryTask?.cancel()
     dictionaryPrefetchTask?.cancel()
     bridge.pause()
@@ -123,6 +126,7 @@ import SwiftUI
     lastPriorityTime = -300
     time = 0
     let config = settings
+    grammarEnabledForVideo = config.aiGrammarEnabled
     loadTask = Task {
       do {
         if store == nil, let storageTask {
@@ -143,12 +147,16 @@ import SwiftUI
         guard sid == session else { return }
         phase = .parsingCaptions
         stage = "字幕を解析し、単語タイムラインを構築しています…"
-        let provider: any GrammarProvider =
-          config.provider == "codex"
-          ? CodexGrammarProvider(settings: config) : LocalGrammarProvider(settings: config)
+        let provider: (any GrammarProvider)?
+        if config.aiGrammarEnabled {
+          provider = grammarProviderOverride ?? (config.provider == "codex"
+            ? CodexGrammarProvider(settings: config) : LocalGrammarProvider(settings: config))
+        } else {
+          provider = nil
+        }
         let key = Fingerprint.make(
-          videoID: id, caption: raw, provider: await provider.cacheIdentity(),
-          model: config.grammarModel)
+          videoID: id, caption: raw, provider: await provider?.cacheIdentity() ?? "captions-only",
+          model: config.aiGrammarEnabled ? config.grammarModel : "")
         let cached = try await store?.load(key)
         let sentences: [Sentence]
         if let cached {
@@ -163,8 +171,13 @@ import SwiftUI
         timeline = Timeline(sentences)
         duration = probe.video.duration
         fingerprint = key
-        scheduler = GrammarScheduler(provider: provider, context: sentences)
+        scheduler = provider.map { GrammarScheduler(provider: $0, context: sentences) }
         continuePlayback()
+        if !config.aiGrammarEnabled {
+          await persistProgress(changed: [], sid: sid)
+          guard sid == session, !Task.isCancelled else { return }
+          await refreshStorage()
+        }
       } catch is CancellationError {} catch {
         guard sid == session else { return }
         loading = false
@@ -176,11 +189,13 @@ import SwiftUI
     }
   }
   func retryCurrentGrammar() {
+    guard grammarEnabledForVideo else { return }
     guard var sentence = currentSentence else { return }
     sentence.grammarAnalysis = nil
     enqueueGrammarRetry([sentence])
   }
   func retryGrammar() {
+    guard grammarEnabledForVideo else { return }
     guard ready, let document else {
       load()
       return
@@ -191,7 +206,7 @@ import SwiftUI
       })
   }
   func enqueueGrammarRetry(_ sentences: [Sentence]) {
-    guard let scheduler else { return }
+    guard grammarEnabledForVideo, let scheduler else { return }
     let sid = session
     let previous = grammarError == nil ? nil : backgroundTask
     previous?.cancel()
@@ -211,13 +226,16 @@ import SwiftUI
     ready = true
     phase = .ready
     grammarError = nil
-    stage = "再生できます。文法は現在位置の前後から解析します"
+    stage = grammarEnabledForVideo
+      ? "再生できます。文法は現在位置の前後から解析します"
+      : "再生できます。AI文法解析はOFFです"
     if let d = document { timeline = Timeline(d.sentences) }
     recordCurrentVideo()
     prefetchDictionary(at: time)
     startBackground()
   }
   func grammarDemand(at time: Double) -> [Sentence] {
+    guard grammarEnabledForVideo else { return [] }
     let nearby =
       document?.sentences.filter {
         $0.endTime >= max(0, time - 10) && $0.startTime < time + 300 && $0.grammarAnalysis == nil
@@ -226,7 +244,8 @@ import SwiftUI
     return nearby.filter { $0.endTime >= time } + nearby.filter { $0.endTime < time }.reversed()
   }
   func startBackground() {
-    guard ready, !backgroundRunning, grammarError == nil, let scheduler else { return }
+    guard grammarEnabledForVideo, ready, !backgroundRunning, grammarError == nil, let scheduler
+    else { return }
     backgroundRunning = true
     let sid = session
     backgroundTask = Task {
@@ -348,7 +367,7 @@ import SwiftUI
     refreshCurrentSentence()
   }
   func apply(_ analyses: [Analysis]) {
-    guard var d = document else { return }
+    guard grammarEnabledForVideo, var d = document else { return }
     let results = Dictionary(uniqueKeysWithValues: analyses.map { ($0.sentenceId, $0) })
     for i in d.sentences.indices {
       if let a = results[d.sentences[i].id] {
@@ -408,6 +427,7 @@ import SwiftUI
     prioritize(t, cancelObsolete: true)
   }
   func prioritize(_ t: Double, cancelObsolete: Bool = false) {
+    guard grammarEnabledForVideo else { return }
     lastPriorityTime = t
     guard grammarError == nil, let scheduler else { return }
     let pending = grammarDemand(at: t)
@@ -556,6 +576,13 @@ import SwiftUI
         } catch { cacheMessage = error.localizedDescription }
       }
     }
+  }
+  func setAIGrammarEnabled(_ enabled: Bool) {
+    settings.aiGrammarEnabled = enabled
+    // Persist this choice independently of any unfinished/invalid settings edits.
+    var saved = AppSettings.load(defaults: defaults)
+    saved.aiGrammarEnabled = enabled
+    saved.save(defaults: defaults)
   }
   func scheduleAPIKeySave(_ key: String) {
     pendingAPIKey = key

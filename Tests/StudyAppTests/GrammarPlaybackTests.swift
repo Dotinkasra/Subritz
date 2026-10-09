@@ -200,4 +200,31 @@ private actor PlaybackGrammarProvider: GrammarProvider {
     #expect(model.ready && !model.backgroundRunning)
     #expect(await provider.snapshot().0.isEmpty)
   }
+  @Test func optedOutPlaybackSeekAndRetriesNeverQueueGrammar() async throws {
+    let provider = PlaybackGrammarProvider()
+    let (model, defaults, suite) = try fixture(provider)
+    defer {
+      model.closeVideo()
+      defaults.removePersistentDomain(forName: suite)
+    }
+    model.grammarEnabledForVideo = false
+    model.continuePlayback()
+    model.update(time: 0.1, duration: 800, state: 1)
+    model.seek(600.1)
+    model.retryCurrentGrammar()
+    model.retryGrammar()
+    model.enqueueGrammarRetry(model.document!.sentences)
+    model.startBackground()
+    await model.backgroundTask?.value
+    #expect(model.ready && model.playing && model.currentToken != nil)
+    #expect(model.grammarDemand(at: 600).isEmpty)
+    #expect(model.backgroundTask == nil && !model.backgroundRunning)
+    #expect(await provider.snapshot().0.isEmpty)
+    #expect(model.document?.sentences.allSatisfy { $0.grammarStatus == .notQueued } == true)
+    model.pinDictionary(model.currentToken!)
+    #expect(model.dictionaryEntry != nil)
+    let sentence = model.document!.sentences[0]
+    model.apply([Analysis(sentenceId: sentence.id, pattern: .SVO, spans: [])])
+    #expect(model.document?.sentences[0].grammarAnalysis == nil)
+  }
 }
