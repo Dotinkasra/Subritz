@@ -29,7 +29,7 @@ extension GrammarProvider {
   }
 }
 public enum GrammarContract {
-  public static let promptVersion = 7, schemaVersion = 2, wireVersion = 2, maxSentences = 8,
+  public static let promptVersion = 8, schemaVersion = 2, wireVersion = 2, maxSentences = 8,
     maxInputTokens = 6000
   public static let prompt = StructuredGrammar.prompt
   public static func payload(_ sentences: [Sentence], context: [Sentence] = []) throws -> String {
