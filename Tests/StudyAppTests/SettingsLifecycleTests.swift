@@ -133,6 +133,10 @@ import Testing
     model.store = original
     model.eijiro = try EijiroProvider(directory: root.appendingPathComponent("dictionary"))
     try await original.save(document, fingerprint: model.fingerprint, limit: 1_000_000)
+    model.library = try LibraryStore(directory: root.appendingPathComponent("library"))
+    try await model.library?.record(document.video)
+    try await model.library?.saveFavorite(
+      FavoriteWord(token: document.sentences[0].tokens[0], entry: nil, video: document.video))
     let session = model.session
     let destination = root.appendingPathComponent("destination")
     model.changeCacheDirectory(to: destination)
@@ -144,5 +148,8 @@ import Testing
     #expect(model.ready && model.session == session)
     #expect(model.document?.video.id == document.video.id)
     #expect(model.settings.cacheURL.path == destination.path)
+    try await model.store?.clear()
+    #expect(try await model.library?.history().count == 1)
+    #expect(try await model.library?.favorites().count == 1)
   }
 }

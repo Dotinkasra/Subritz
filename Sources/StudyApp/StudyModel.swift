@@ -34,6 +34,17 @@ import SwiftUI
   @Published var isChangingCacheDirectory = false
   @Published var cacheMessage = ""
   @Published var confirmCloseVideo = false
+  @Published var librarySection: LibrarySection = .history
+  @Published var libraryLoading = false
+  @Published var libraryError: String?
+  @Published var videoHistory: [VideoHistoryItem] = []
+  @Published var favoriteWords: [FavoriteWord] = []
+  @Published var pendingFavoriteIDs = Set<String>()
+  @Published var pendingHistory: VideoHistoryItem?
+  var library: LibraryStore?
+  var libraryStartup: Task<LibraryStore, Error>?
+  var libraryOperation: Task<Void, Never>?
+  var youtubeProviderOverride: (any YouTubeProvider)?
   let defaults: UserDefaults
   var apiKeyTask: Task<Void, Never>?
   var pendingAPIKey: String?
@@ -67,6 +78,7 @@ import SwiftUI
     guard prepareStorage else { return }
     let directory = settings.cacheURL
     storageTask = Task.detached { (try StudyStore(directory: directory), try EijiroProvider()) }
+    startLibrary()
     Task {
       do {
         let stores = try await storageTask!.value
@@ -121,7 +133,8 @@ import SwiftUI
         phase = .probingVideo
         StudyLog.youtube.info("Probing video metadata")
         stage = "動画情報を取得しています…"
-        let yt = YtDlpProvider(path: config.ytDlpPath)
+        let yt: any YouTubeProvider =
+          youtubeProviderOverride ?? YtDlpProvider(path: config.ytDlpPath)
         let probe = try await yt.probe(id: id)
         guard sid == session else { return }
         phase = .fetchingCaptions
@@ -200,6 +213,7 @@ import SwiftUI
     grammarError = nil
     stage = "再生できます。文法は現在位置の前後から解析します"
     if let d = document { timeline = Timeline(d.sentences) }
+    recordCurrentVideo()
     prefetchDictionary(at: time)
     startBackground()
   }
@@ -521,6 +535,7 @@ import SwiftUI
     phase = .idle
     stage = "YouTube の英語動画 URL を入力してください"
     confirmCloseVideo = false
+    pendingHistory = nil
   }
   func saveSettings(previous: AppSettings? = nil) {
     guard settings.timeout.isFinite, (5...3600).contains(settings.timeout) else {

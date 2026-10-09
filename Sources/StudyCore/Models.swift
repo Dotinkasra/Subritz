@@ -54,6 +54,18 @@ public struct Video: Codable {
   public var id: String
   public var title: String
   public var duration: Double
+  public var thumbnailURL: String? = nil
+  public var watchURL: String { "https://www.youtube.com/watch?v=" + id }
+  public var thumbnailImageURL: URL? {
+    if let thumbnailURL, let url = URL(string: thumbnailURL), url.scheme == "https", url.host != nil
+    {
+      return url
+    }
+    guard id.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil else {
+      return nil
+    }
+    return URL(string: "https://i.ytimg.com/vi/" + id + "/mqdefault.jpg")
+  }
 }
 public struct StudyDocument: Codable {
   public var video: Video

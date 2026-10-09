@@ -86,6 +86,7 @@ struct SettingsWindowTitle: NSViewRepresentable {
 
 struct SubritzCommands: Commands {
   @ObservedObject var model: StudyModel
+  @Environment(\.openWindow) private var openWindow
   var body: some Commands {
     CommandGroup(replacing: .sidebar) {}
     CommandGroup(replacing: .help) {}
@@ -93,6 +94,19 @@ struct SubritzCommands: Commands {
       Button(String(localized: "About Subritz")) {
         NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Subritz"])
       }
+    }
+    CommandMenu(String(localized: "Library")) {
+      Button(String(localized: "Video History")) {
+        model.librarySection = .history
+        openWindow(id: "library")
+      }.keyboardShortcut("h", modifiers: [.command, .shift])
+      Button(String(localized: "Favorite Words")) {
+        model.librarySection = .favorites
+        openWindow(id: "library")
+      }.keyboardShortcut("b", modifiers: [.command, .shift])
+      Divider()
+      Button(String(localized: "Toggle Favorite Word")) { model.toggleDisplayedFavorite() }
+        .keyboardShortcut("d", modifiers: .command).disabled(!model.canToggleDisplayedFavorite)
     }
     CommandGroup(replacing: .newItem) {
       Button(String(localized: "Close Video")) { model.confirmCloseVideo = true }

@@ -10,12 +10,16 @@ import SwiftUI
         .background(MainWindowLifecycle(model: model).frame(width: 0, height: 0))
         .onAppear { lifecycle.model = model }
     }.commands { SubritzCommands(model: model) }
+    Window("Subritz — ライブラリ", id: "library") {
+      LibraryView(model: model).frame(minWidth: 760, minHeight: 500)
+    }.defaultSize(width: 900, height: 620)
     Settings { SettingsView(model: model) }
   }
 }
 struct MainView: View {
   @ObservedObject var model: StudyModel
   @Environment(\.openSettings) private var openSettings
+  @Environment(\.openWindow) private var openWindow
   var body: some View {
     VStack(spacing: 0) {
       HStack {
@@ -30,6 +34,14 @@ struct MainView: View {
             .disabled(model.isChangingCacheDirectory)
           Button("読み込む") { model.load() }.keyboardShortcut(.return, modifiers: .command)
             .disabled(model.isChangingCacheDirectory)
+        }
+        Button("動画履歴", systemImage: "clock") {
+          model.librarySection = .history
+          openWindow(id: "library")
+        }
+        Button("お気に入り", systemImage: "star") {
+          model.librarySection = .favorites
+          openWindow(id: "library")
         }
         Button {
           model.showSettings = true
@@ -66,10 +78,12 @@ struct MainView: View {
         VStack(spacing: 18) {
           Image(systemName: "captions.bubble").font(.system(size: 48)).foregroundStyle(.secondary)
           Text("英語を、動画と一緒に読み解く").font(.title2)
-          Text("英語の自動字幕がある YouTube 動画を読み込みます。\n字幕の単語にマウスを置くと詳細辞書を表示し、クリックすると固定します。")
-            .multilineTextAlignment(
-              .center
-            ).foregroundStyle(.secondary)
+          Text(
+            "英語の自動字幕がある YouTube 動画を読み込みます。\n字幕の単語にマウスを置くと詳細辞書を表示し、クリックすると固定し、ダブルクリックするとその発話位置へ移動します。"
+          )
+          .multilineTextAlignment(
+            .center
+          ).foregroundStyle(.secondary)
           if model.loading { ProgressView() }
           Text(model.stage).font(.callout)
 
@@ -86,6 +100,9 @@ struct MainView: View {
           }
           if let details = model.grammarErrorDetails { ErrorDetails(text: details) }
         }.padding(12)
+      }
+      if let error = model.libraryError {
+        Text(error).font(.callout).foregroundStyle(.red).padding(10)
       }
       if let error = model.error {
         VStack(alignment: .leading, spacing: 8) {
@@ -152,6 +169,15 @@ struct DictionaryPane: View {
         Spacer()
         Text(model.settings.dictionary == "eijiro" ? "英辞郎" : "macOS 辞書").font(.caption)
           .foregroundStyle(.secondary)
+        Button {
+          model.toggleDisplayedFavorite()
+        } label: {
+          Image(systemName: model.displayedWordIsFavorite ? "star.fill" : "star")
+            .font(.title3).foregroundStyle(
+              model.displayedWordIsFavorite ? Color.orange : Color.secondary)
+        }.disabled(!model.canToggleDisplayedFavorite)
+          .help(model.displayedWordIsFavorite ? "お気に入りを解除" : "表示中の単語をお気に入りに登録")
+          .accessibilityLabel(model.displayedWordIsFavorite ? "お気に入りを解除" : "単語をお気に入りに登録")
       }
       Picker("辞書モード", selection: $model.realtime) {
         Text("リアルタイム").tag(true)
@@ -334,23 +360,20 @@ struct SubtitleLineView: View {
       FlowLayout(spacing: 5) {
         ForEach(line.tokens) { token in
           VStack(spacing: 2) {
-            Button {
-              model.pinDictionary(token)
-            } label: {
-              Text(token.surface).font(
-                .system(size: current ? 26 : 21, weight: current ? .medium : .regular)
-              )
-              .padding(.horizontal, 2).padding(.vertical, 3)
-              .background(
-                model.currentToken?.id == token.id ? Color.accentColor.opacity(0.24) : .clear,
-                in: RoundedRectangle(cornerRadius: 4)
-              )
-              .overlay {
-                RoundedRectangle(cornerRadius: 4)
-                  .stroke(model.pinnedToken?.id == token.id ? Color.orange : .clear, lineWidth: 1.5)
-              }
-            }.buttonStyle(.plain).disabled(!token.lexical)
-              .help(token.lexical ? "クリックして辞書を固定" : "")
+            SubtitleWordButton(
+              title: token.surface, size: current ? 26 : 21, current: current,
+              enabled: token.lexical,
+              onClick: { model.pinDictionary(token) }, onDoubleClick: { model.seekToWord(token) }
+            )
+            .background(
+              model.currentToken?.id == token.id ? Color.accentColor.opacity(0.24) : .clear,
+              in: RoundedRectangle(cornerRadius: 4)
+            )
+            .overlay {
+              RoundedRectangle(cornerRadius: 4)
+                .stroke(model.pinnedToken?.id == token.id ? Color.orange : .clear, lineWidth: 1.5)
+                .allowsHitTesting(false)
+            }
             if abs(line.index - model.currentLineIndex) <= 1 {
               ForEach(Array(spans(token).enumerated()), id: \.offset) { _, span in
                 VStack(spacing: 2) {

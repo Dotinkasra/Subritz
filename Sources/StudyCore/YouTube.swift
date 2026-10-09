@@ -105,7 +105,10 @@ public struct VideoProbe: Decodable {
   public var duration: Double?
   public var language: String?
   public var automatic_captions: [String: [CaptionTrack]]?
-  public var video: Video { Video(id: id, title: title, duration: duration ?? 0) }
+  public var thumbnail: String? = nil
+  public var video: Video {
+    Video(id: id, title: title, duration: duration ?? 0, thumbnailURL: thumbnail)
+  }
 }
 public protocol YouTubeProvider {
   func probe(id: String) async throws -> VideoProbe

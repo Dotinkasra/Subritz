@@ -169,6 +169,22 @@ public actor StudyStore {
     return StudyDocument(
       video: try decode(Video.self, video[0]), rawCaption: raw, sentences: sentences)
   }
+  public func recentHistory(limit: Int = 100) throws -> [VideoHistoryItem] {
+    var seen = Set<String>()
+    var items: [VideoHistoryItem] = []
+    for row in try db.rows(
+      "SELECT v.metadata,c.accessed FROM videos v JOIN cache_entries c ON v.fingerprint=c.fingerprint ORDER BY c.accessed DESC"
+    ) {
+      guard let video = try? decode(Video.self, row[0]), seen.insert(video.id).inserted else {
+        continue
+      }
+      items.append(
+        VideoHistoryItem(video: video, lastOpened: Date(timeIntervalSince1970: Double(row[1]) ?? 0))
+      )
+      if items.count >= max(1, min(100, limit)) { break }
+    }
+    return items
+  }
   public func save(_ document: StudyDocument, fingerprint: String, limit: Int) throws {
     try db.execute("BEGIN IMMEDIATE")
     do {
