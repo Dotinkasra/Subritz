@@ -7,6 +7,17 @@ public struct DictionaryEntry: Sendable {
   public var shortGloss: String
   public var headword: String? = nil
   public var partOfSpeech: String? = nil
+  public var sections: [DictionarySection] = []
+  public var pronunciation: String? = nil
+}
+public struct DictionarySection: Sendable {
+  public var partOfSpeech: String
+  public var senses: [DictionarySense]
+}
+public struct DictionarySense: Sendable {
+  public var meaning: String
+  public var examples: [String]
+  public var shortMeaning: String? = nil
 }
 public protocol DictionaryProvider: Sendable {
   func lookup(_ token: Token) async -> DictionaryEntry?
@@ -156,32 +167,12 @@ enum EijiroText {
     return DictionaryEntry(definition: detailed, shortGloss: gloss.isEmpty ? "日本語の語義なし" : gloss)
   }
 }
-private enum MacDictionaryAccess {
-  static let lock = NSLock()
-  static func entry(for word: String) -> DictionaryEntry? {
-    // DictionaryServices shares its active-dictionary state across callers.
-    lock.lock()
-    defer { lock.unlock() }
-    let range = CFRange(location: 0, length: (word as NSString).length)
-    guard let value = DCSCopyTextDefinition(nil, word as CFString, range)?.takeRetainedValue()
-    else { return nil }
-    if word.contains(" ") {
-      // Initialize the service through CopyTextDefinition first, and do not ask
-      // for a term range when there are no active definitions.
-      let detected = DCSGetTermRangeInString(nil, word as CFString, 0)
-      guard detected.location == 0, detected.length == range.length else { return nil }
-    }
-    let text = value as String
-    return DictionaryEntry(definition: text, shortGloss: DictionaryText.gloss(text), headword: word,
-      partOfSpeech: word.contains(" ") ? "複数語表現" : nil)
-  }
-}
 public struct MacDictionaryProvider: DictionaryProvider {
   public init() {}
   public func lookup(_ token: Token) async -> DictionaryEntry? {
     await Task.detached {
       for word in DictionaryText.candidates(token) {
-        if let entry = MacDictionaryAccess.entry(for: word) { return entry }
+        if let entry = MacDictionaryAccess.entry(for: word, pos: token.partOfSpeech) { return entry }
       }
       return nil
     }.value

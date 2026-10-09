@@ -286,11 +286,34 @@ struct DictionaryPane: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 14) {
                   Text("詳細定義").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                  ForEach(
-                    Array(DictionaryText.paragraphs(entry.definition).enumerated()), id: \.offset
-                  ) { _, paragraph in
-                    Text(paragraph).font(.system(size: 19)).lineSpacing(7)
-                      .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                  if !entry.sections.isEmpty {
+                    if let pronunciation = entry.pronunciation, !pronunciation.isEmpty {
+                      Text(pronunciation).font(.system(size: 17)).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    }
+                    ForEach(Array(entry.sections.enumerated()), id: \.offset) { _, section in
+                      VStack(alignment: .leading, spacing: 14) {
+                        Text(section.partOfSpeech).font(.headline).foregroundStyle(.secondary)
+                        ForEach(Array(section.senses.enumerated()), id: \.offset) { index, sense in
+                          VStack(alignment: .leading, spacing: 8) {
+                            Text("\(index + 1). " + sense.meaning).font(.system(size: 21, weight: .medium))
+                              .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                            ForEach(Array(sense.examples.enumerated()), id: \.offset) { _, example in
+                              Text(example).font(.system(size: 16)).foregroundStyle(.secondary)
+                                .lineSpacing(5).fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                            }
+                          }
+                        }
+                      }.lineSpacing(7).padding(.vertical, 6)
+                    }
+                  } else {
+                    ForEach(
+                      Array(DictionaryText.paragraphs(entry.definition).enumerated()), id: \.offset
+                    ) { _, paragraph in
+                      Text(paragraph).font(.system(size: 19)).lineSpacing(7)
+                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                    }
                   }
                 }
               }
