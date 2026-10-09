@@ -29,6 +29,7 @@ struct MainView: View {
         if model.hasOpenVideo {
           Text(model.grammarEnabledForVideo ? "AI文法解析 ON" : "AI文法解析 OFF")
             .font(.caption).foregroundStyle(.secondary)
+          if model.ready { AdvancedModeToggle(model: model) }
           Button("動画を閉じる", systemImage: "xmark") { model.confirmCloseVideo = true }
         } else {
           TextField("https://www.youtube.com/watch?v=…", text: $model.url)
@@ -154,6 +155,16 @@ struct GrammarLoadOption: View {
     .help("OFFの場合、AIへ字幕を送らず、文法の下線・ラベルを表示しません。動画・字幕・辞書は使えます。")
   }
 }
+struct AdvancedModeToggle: View {
+  @ObservedObject var model: StudyModel
+  var body: some View {
+    Toggle("上級者モード", isOn: Binding(
+      get: { model.settings.advancedMode }, set: { model.setAdvancedMode($0) }
+    ))
+    .toggleStyle(.switch).fixedSize()
+    .help("リアルタイム辞書の日本語解説を隠し、英単語・表現だけを表示します。通常モードや字幕で選択した辞書はそのまま表示します。")
+  }
+}
 struct ErrorDetails: View {
   let text: String
   var body: some View {
@@ -181,8 +192,10 @@ struct DictionaryPane: View {
           }.font(.caption)
         }
         Spacer()
-        Text(model.settings.dictionary == "eijiro" ? "英辞郎" : "macOS 辞書").font(.caption)
-          .foregroundStyle(.secondary)
+        if !model.realtimeEnglishOnly {
+          Text(model.settings.dictionary == "eijiro" ? "英辞郎" : "macOS 辞書").font(.caption)
+            .foregroundStyle(.secondary)
+        }
         Button {
           model.toggleDisplayedFavorite()
         } label: {
@@ -205,34 +218,36 @@ struct DictionaryPane: View {
                 .system(size: min(68, geometry.size.width / 8), weight: .bold)
               )
               .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-              Text(pos(model.dictionaryEntry?.partOfSpeech ?? token.partOfSpeech)).font(.system(size: 22, weight: .medium))
-                .foregroundStyle(.secondary)
-              if let headword = model.dictionaryEntry?.headword,
-                DictionaryText.normalize(headword) != token.normalized {
-                Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
-              }
-              if let entry = model.dictionaryEntry {
-                let meanings = realtimeMeanings(entry.shortGloss)
-                VStack(spacing: 12) {
-                  Text(meanings.first ?? entry.shortGloss).font(
-                    .system(size: min(48, geometry.size.width / 8), weight: .semibold)
-                  )
-                  .multilineTextAlignment(.center).lineSpacing(8)
-                  .fixedSize(horizontal: false, vertical: true)
-                  if meanings.count > 1 {
-                    Text(meanings.dropFirst().joined(separator: "、"))
-                      .font(.system(size: 18)).foregroundStyle(.primary.opacity(0.55))
-                      .multilineTextAlignment(.center).lineSpacing(4)
-                      .fixedSize(horizontal: false, vertical: true)
-                  }
+              if !model.realtimeEnglishOnly {
+                Text(pos(model.dictionaryEntry?.partOfSpeech ?? token.partOfSpeech)).font(.system(size: 22, weight: .medium))
+                  .foregroundStyle(.secondary)
+                if let headword = model.dictionaryEntry?.headword,
+                  DictionaryText.normalize(headword) != token.normalized {
+                  Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
                 }
-              } else if model.dictionaryLoading {
-                ProgressView()
-              } else {
-                Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "語義が見つかりません")
-                  .font(.title2).foregroundStyle(.secondary)
+                if let entry = model.dictionaryEntry {
+                  let meanings = realtimeMeanings(entry.shortGloss)
+                  VStack(spacing: 12) {
+                    Text(meanings.first ?? entry.shortGloss).font(
+                      .system(size: min(48, geometry.size.width / 8), weight: .semibold)
+                    )
+                    .multilineTextAlignment(.center).lineSpacing(8)
+                    .fixedSize(horizontal: false, vertical: true)
+                    if meanings.count > 1 {
+                      Text(meanings.dropFirst().joined(separator: "、"))
+                        .font(.system(size: 18)).foregroundStyle(.primary.opacity(0.55))
+                        .multilineTextAlignment(.center).lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                  }
+                } else if model.dictionaryLoading {
+                  ProgressView()
+                } else {
+                  Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "語義が見つかりません")
+                    .font(.title2).foregroundStyle(.secondary)
+                }
               }
-            } else {
+            } else if !model.realtimeEnglishOnly {
               Text("発話中の単語を表示します").font(.title2).foregroundStyle(.secondary)
             }
           }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)

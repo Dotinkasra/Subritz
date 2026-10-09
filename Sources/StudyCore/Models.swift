@@ -131,6 +131,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
   public var localModel = ""
   public var codexModel = ""
   public var aiGrammarEnabled = true
+  public var advancedMode = false
   public var cacheDirectory = ""
   // Compatibility for callers using the active provider's model.
   public var model: String {
@@ -156,7 +157,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
   public init() {}
   enum CodingKeys: String, CodingKey {
     case ytDlpPath, codexPath, dictionary, provider, baseURL, localModel, codexModel,
-      cacheDirectory, timeout, cacheMB, localConcurrency, codexConcurrency, aiGrammarEnabled
+      cacheDirectory, timeout, cacheMB, localConcurrency, codexConcurrency, aiGrammarEnabled,
+      advancedMode
   }
   enum LegacyKeys: String, CodingKey { case model }
   public init(from decoder: Decoder) throws {
@@ -170,6 +172,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
     localModel = try c.decodeIfPresent(String.self, forKey: .localModel) ?? localModel
     codexModel = try c.decodeIfPresent(String.self, forKey: .codexModel) ?? codexModel
     aiGrammarEnabled = try c.decodeIfPresent(Bool.self, forKey: .aiGrammarEnabled) ?? aiGrammarEnabled
+    advancedMode = try c.decodeIfPresent(Bool.self, forKey: .advancedMode) ?? advancedMode
     cacheDirectory = try c.decodeIfPresent(String.self, forKey: .cacheDirectory) ?? cacheDirectory
     localConcurrency = max(
       1, min(2, try c.decodeIfPresent(Int.self, forKey: .localConcurrency) ?? 1))

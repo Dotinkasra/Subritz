@@ -59,6 +59,9 @@ import SwiftUI
   var cacheOperation: Task<Void, Never>?
   var dictionaryBusy: Bool { isImportingDictionary || isRemovingDictionary }
   var hasOpenVideo: Bool { loading || ready || document != nil }
+  var realtimeEnglishOnly: Bool {
+    settings.advancedMode && realtime && !dictionaryIsPinned && hoverToken == nil
+  }
   let bridge = PlayerBridge()
   var storageTask: Task<(StudyStore, EijiroProvider), Error>?
   var store: StudyStore?
@@ -655,6 +658,13 @@ import SwiftUI
     // Persist this choice independently of any unfinished/invalid settings edits.
     var saved = AppSettings.load(defaults: defaults)
     saved.aiGrammarEnabled = enabled
+    saved.save(defaults: defaults)
+  }
+  func setAdvancedMode(_ enabled: Bool) {
+    // Display only: keep the current lookup, cached meanings and playback untouched.
+    settings.advancedMode = enabled
+    var saved = AppSettings.load(defaults: defaults)
+    saved.advancedMode = enabled
     saved.save(defaults: defaults)
   }
   func scheduleAPIKeySave(_ key: String) {

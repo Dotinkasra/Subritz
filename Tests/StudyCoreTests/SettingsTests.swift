@@ -15,6 +15,7 @@ struct SettingsTests {
       #expect(settings.model.isEmpty)
       #expect(settings.timeout == 120)
       #expect(settings.aiGrammarEnabled)
+      #expect(!settings.advancedMode)
     }
   }
   @Test func providerModelsAndCachePathRoundTripSeparately() throws {
@@ -23,6 +24,7 @@ struct SettingsTests {
     settings.codexModel = " GPT-6-Luna "
     settings.cacheDirectory = "/tmp/Subritz Cache"
     settings.aiGrammarEnabled = false
+    settings.advancedMode = true
     let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
     #expect(decoded == settings)
     #expect(decoded.grammarModel == "Local-Model")
