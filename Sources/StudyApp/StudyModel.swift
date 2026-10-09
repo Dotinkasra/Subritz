@@ -21,6 +21,11 @@ import SwiftUI
   @Published var currentToken: Token?
   @Published var pinnedToken: Token?
   @Published var hoverToken: Token?
+  @Published var pinnedExpression: DictionaryExpression?
+  @Published var resolvedExpression: DictionaryExpression?
+  var draggingDictionarySelection = false
+  var expressionCache: [UUID: DictionaryExpressionMatch] = [:]
+  var expressionMisses = Set<UUID>()
   @Published var dictionaryEntry: DictionaryEntry?
   @Published var realtime = true
   @Published var time: Double = 0
@@ -120,6 +125,11 @@ import SwiftUI
     currentLineIndex = 0
     hoverToken = nil
     pinnedToken = nil
+    pinnedExpression = nil
+    resolvedExpression = nil
+    expressionCache.removeAll()
+    expressionMisses.removeAll()
+    draggingDictionarySelection = false
     dictionaryEntry = nil
     selectedDictionaryID = nil
     activeSentenceIndex = nil
@@ -406,10 +416,12 @@ import SwiftUI
     let token = timeline.token(at: t)
     let tokenChanged = currentToken?.id != token?.id
     let resumeRealtime =
-      realtime && state == 1 && pinnedToken != nil
+      realtime && state == 1 && dictionaryIsPinned && !draggingDictionarySelection
       && (resumedPlayback || tokenChanged)
     if resumeRealtime {
       pinnedToken = nil
+      pinnedExpression = nil
+      selectedDictionaryID = nil
       hoverToken = nil
     }
     if tokenChanged {
@@ -445,26 +457,48 @@ import SwiftUI
     }
   }
   func hover(_ token: Token?, exiting: UUID? = nil) {
-    guard pinnedToken == nil else { return }
+    guard !dictionaryIsPinned else { return }
     if let exiting, hoverToken?.id != exiting { return }
     hoverToken = token
     lookup()
   }
   func pinDictionary(_ token: Token) {
     guard token.lexical else { return }
+    selectedDictionaryID = nil
+    pinnedExpression = nil
     pinnedToken = token
     hoverToken = nil
     lookup()
   }
   func releaseDictionaryPin() {
     pinnedToken = nil
+    pinnedExpression = nil
+    selectedDictionaryID = nil
     hoverToken = nil
     lookup()
   }
   func dictionaryModeChanged() {
     if realtime && playing { releaseDictionaryPin() } else { lookup() }
   }
-  var displayedToken: Token? { pinnedToken ?? hoverToken ?? (realtime ? currentToken : nil) }
+  var dictionaryIsPinned: Bool { pinnedToken != nil || pinnedExpression != nil }
+  var dictionaryQueryToken: Token? { pinnedExpression?.token ?? pinnedToken ?? hoverToken ?? (realtime ? currentToken : nil) }
+  var displayedToken: Token? { pinnedExpression?.token ?? resolvedExpression?.token ?? dictionaryQueryToken }
+  func pinDictionaryRange(from start: UUID, to end: UUID) {
+    guard let tokens = timeline?.tokens,
+      let a = tokens.firstIndex(where: { $0.id == start }),
+      let b = tokens.firstIndex(where: { $0.id == end }) else { return }
+    let selection = Array(tokens[min(a,b)...max(a,b)])
+    guard selection.first?.lexical == true, selection.last?.lexical == true else { return }
+    if selection.count == 1 { pinDictionary(selection[0]); return }
+    if pinnedExpression?.tokens.map(\.id) == selection.map(\.id) { return }
+    pinnedToken = nil
+    pinnedExpression = DictionaryExpression(selection)
+    hoverToken = nil
+    lookup()
+  }
+  func dictionarySelectionContains(_ token: Token) -> Bool {
+    pinnedExpression?.contains(token) == true || pinnedToken?.id == token.id
+  }
   var subtitleLines: [CaptionLine] { timeline?.lines ?? [] }
   func dictionaryKey(_ token: Token) -> String {
     settings.dictionary + ":" + token.normalized + ":" + (token.partOfSpeech ?? "") + ":"
@@ -473,10 +507,18 @@ import SwiftUI
   func prefetchDictionary(at time: Double) {
     dictionaryPrefetchTask?.cancel()
     let tokens = timeline?.upcomingWords(at: time, limit: 10) ?? []
+    let allTokens = timeline?.tokens ?? []
     let sid = session
     let provider: any DictionaryProvider =
       settings.dictionary == "eijiro" && eijiro != nil ? eijiro! : MacDictionaryProvider()
     dictionaryPrefetchTask = Task {
+      let anchors = tokens.filter { expressionCache[$0.id] == nil && !expressionMisses.contains($0.id) }
+      let matches = await DictionaryExpressions.matches(anchors: anchors, in: allTokens, provider: provider)
+      guard !Task.isCancelled, sid == session else { return }
+      for anchor in anchors {
+        if let match = matches[anchor.id] { expressionCache[anchor.id] = match }
+        else { expressionMisses.insert(anchor.id) }
+      }
       for token in tokens {
         guard !Task.isCancelled, sid == session else { return }
         let key = dictionaryKey(token)
@@ -488,34 +530,60 @@ import SwiftUI
     }
   }
   func lookup() {
-    let token = displayedToken
-    guard selectedDictionaryID != token?.id else { return }
+    let token = dictionaryQueryToken
+    guard token == nil || selectedDictionaryID != token?.id else { return }
     dictionaryTask?.cancel()
     selectedDictionaryID = token?.id
     dictionaryEntry = nil
+    resolvedExpression = nil
     dictionaryLoading = false
     guard let token, token.lexical else { return }
+    let explicit = pinnedExpression
+    let automatic = explicit == nil && pinnedToken == nil
+    if automatic, let match = expressionCache[token.id] {
+      resolvedExpression = match.expression
+      dictionaryEntry = match.entry
+      return
+    }
     let key = dictionaryKey(token)
-    if dictionaryMisses.contains(key) { return }
+    let requiresPhraseLookup = explicit != nil || (automatic && !expressionMisses.contains(token.id))
+    if dictionaryMisses.contains(key), !requiresPhraseLookup { return }
     if let entry = dictionaryCache[key] {
       dictionaryLoading = false
       dictionaryEntry = entry
-      return
+      if explicit != nil || !requiresPhraseLookup { return }
     }
     let sid = session
     let provider: any DictionaryProvider =
       settings.dictionary == "eijiro" && eijiro != nil ? eijiro! : MacDictionaryProvider()
-    dictionaryLoading = true
+    let allTokens = timeline?.tokens ?? []
+    dictionaryLoading = dictionaryEntry == nil
     dictionaryTask = Task {
-      let entry = await provider.lookup(token)
-      guard !Task.isCancelled, sid == session, displayedToken?.id == token.id else { return }
+      let entry: DictionaryEntry?
+      var match: DictionaryExpressionMatch?
+      if let explicit {
+        entry = await provider.lookupExpressions([explicit.tokens]).first ?? nil
+      } else {
+        if automatic, !expressionMisses.contains(token.id) {
+          match = await DictionaryExpressions.matches(anchors: [token], in: allTokens, provider: provider)[token.id]
+        }
+        if let cached = match?.entry ?? dictionaryCache[key] { entry = cached }
+        else { entry = await provider.lookup(token) }
+      }
+      guard !Task.isCancelled, sid == session, dictionaryQueryToken?.id == token.id else { return }
       StudyLog.dictionary.debug("Updated dictionary token")
       dictionaryLoading = false
       dictionaryEntry = entry
-      if let entry {
+      if let match {
+        resolvedExpression = match.expression
+        expressionCache[token.id] = match
+      } else if automatic {
+        expressionMisses.insert(token.id)
+      }
+      if match == nil, let entry {
         if dictionaryCache.count > 2000 { dictionaryCache.removeAll() }
         dictionaryCache[key] = entry
-      } else {
+      } else if entry == nil {
         dictionaryMisses.insert(key)
       }
     }
@@ -539,6 +607,11 @@ import SwiftUI
     currentToken = nil
     hoverToken = nil
     pinnedToken = nil
+    pinnedExpression = nil
+    resolvedExpression = nil
+    expressionCache.removeAll()
+    expressionMisses.removeAll()
+    draggingDictionarySelection = false
     dictionaryEntry = nil
     dictionaryLoading = false
     selectedDictionaryID = nil
@@ -606,6 +679,8 @@ import SwiftUI
     dictionaryPrefetchTask?.cancel()
     dictionaryCache.removeAll()
     dictionaryMisses.removeAll()
+    expressionCache.removeAll()
+    expressionMisses.removeAll()
     selectedDictionaryID = nil
     lookup()
   }

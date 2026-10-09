@@ -168,12 +168,12 @@ struct ErrorDetails: View {
 }
 struct DictionaryPane: View {
   @ObservedObject var model: StudyModel
-  var detailed: Bool { model.pinnedToken != nil || model.hoverToken != nil || !model.realtime }
+  var detailed: Bool { model.dictionaryIsPinned || model.hoverToken != nil || !model.realtime }
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
       HStack {
         Label("辞書", systemImage: "book.closed").font(.headline)
-        if model.pinnedToken != nil {
+        if model.dictionaryIsPinned {
           Button {
             model.releaseDictionaryPin()
           } label: {
@@ -205,8 +205,12 @@ struct DictionaryPane: View {
                 .system(size: min(68, geometry.size.width / 8), weight: .bold)
               )
               .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-              Text(pos(token.partOfSpeech)).font(.system(size: 22, weight: .medium))
+              Text(pos(model.dictionaryEntry?.partOfSpeech ?? token.partOfSpeech)).font(.system(size: 22, weight: .medium))
                 .foregroundStyle(.secondary)
+              if let headword = model.dictionaryEntry?.headword,
+                DictionaryText.normalize(headword) != token.normalized {
+                Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
+              }
               if let entry = model.dictionaryEntry {
                 let meanings = realtimeMeanings(entry.shortGloss)
                 VStack(spacing: 12) {
@@ -225,7 +229,8 @@ struct DictionaryPane: View {
               } else if model.dictionaryLoading {
                 ProgressView()
               } else {
-                Text("語義が見つかりません").font(.title2).foregroundStyle(.secondary)
+                Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "語義が見つかりません")
+                  .font(.title2).foregroundStyle(.secondary)
               }
             } else {
               Text("発話中の単語を表示します").font(.title2).foregroundStyle(.secondary)
@@ -237,15 +242,20 @@ struct DictionaryPane: View {
           Text(token.surface).font(.system(size: 42, weight: .semibold)).textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
           HStack(spacing: 8) {
-            Text(pos(token.partOfSpeech)).font(.system(size: 13, weight: .medium))
+            Text(pos(model.dictionaryEntry?.partOfSpeech ?? token.partOfSpeech)).font(.system(size: 13, weight: .medium))
               .padding(.horizontal, 10).padding(.vertical, 5)
               .background(Color.accentColor.opacity(0.12), in: Capsule())
-            if model.pinnedToken != nil {
-              Label("クリックで固定中", systemImage: "pin.fill").font(.caption).foregroundStyle(.orange)
+            if model.dictionaryIsPinned {
+              Label(model.pinnedExpression != nil ? "範囲を固定中" : "クリックで固定中", systemImage: "pin.fill")
+                .font(.caption).foregroundStyle(.orange)
             } else if model.hoverToken != nil {
               Text("マウスで選択中").font(.caption).foregroundStyle(.secondary)
             }
           }
+        }
+        if let headword = model.dictionaryEntry?.headword,
+          DictionaryText.normalize(headword) != token.normalized {
+          Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
         }
         Divider()
         if let entry = model.dictionaryEntry {
@@ -276,7 +286,8 @@ struct DictionaryPane: View {
           ProgressView("辞書を検索しています…").frame(
             maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
-          Text("辞書項目が見つかりませんでした").font(.body).foregroundStyle(.secondary)
+          Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "辞書項目が見つかりませんでした")
+            .font(.body).foregroundStyle(.secondary)
           Spacer()
         }
       } else {
@@ -334,6 +345,7 @@ struct SubtitlePane: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text(model.grammarEnabledForVideo ? "字幕 / 文法" : "字幕").font(.headline)
+        Text("ドラッグで複数語を選択").font(.caption).foregroundStyle(.secondary)
         Spacer()
         Text(model.playing ? "再生位置に追従" : "過去・未来へスクロールできます")
           .font(.caption).foregroundStyle(.secondary)
@@ -354,11 +366,15 @@ struct SubtitlePane: View {
           .onAppear { follow(proxy) }
           .onChange(of: model.currentLineIndex) { follow(proxy) }
           .onChange(of: model.playing) { if model.playing { follow(proxy) } }
+          .onChange(of: model.draggingDictionarySelection) { _, dragging in
+            if !dragging && model.playing { follow(proxy) }
+          }
         }
       }
     }.padding(16).background(Color(nsColor: .windowBackgroundColor))
   }
   func follow(_ proxy: ScrollViewProxy) {
+    guard !model.draggingDictionarySelection else { return }
     let lines = model.subtitleLines
     guard lines.indices.contains(model.currentLineIndex) else { return }
     // Follow on line changes, not on every clock tick: scrolling still works within a line.
@@ -377,15 +393,19 @@ struct SubtitleLineView: View {
             SubtitleWordButton(
               title: token.surface, size: current ? 26 : 21, current: current,
               enabled: token.lexical,
-              onClick: { model.pinDictionary(token) }, onDoubleClick: { model.seekToWord(token) }
+              onClick: { model.pinDictionary(token) }, onDoubleClick: { model.seekToWord(token) },
+              selectionID: token.id, selectionScope: model.session,
+              onDrag: { endpoint in model.pinDictionaryRange(from: token.id, to: endpoint) },
+              onDragState: { model.draggingDictionarySelection = $0 }
             )
             .background(
-              model.currentToken?.id == token.id ? Color.accentColor.opacity(0.24) : .clear,
+              model.currentToken?.id == token.id || model.resolvedExpression?.contains(token) == true
+                ? Color.accentColor.opacity(0.24) : .clear,
               in: RoundedRectangle(cornerRadius: 4)
             )
             .overlay {
               RoundedRectangle(cornerRadius: 4)
-                .stroke(model.pinnedToken?.id == token.id ? Color.orange : .clear, lineWidth: 1.5)
+                .stroke(model.dictionarySelectionContains(token) ? Color.orange : .clear, lineWidth: 1.5)
                 .allowsHitTesting(false)
             }
             if model.grammarEnabledForVideo, abs(line.index - model.currentLineIndex) <= 1 {

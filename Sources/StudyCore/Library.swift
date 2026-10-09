@@ -22,8 +22,8 @@ public struct FavoriteWord: Codable, Identifiable {
   public init(token: Token, entry: DictionaryEntry?, video: Video?, savedAt: Date = Date()) {
     id = DictionaryText.normalize(token.surface)
     surface = token.surface
-    lemma = token.lemma
-    partOfSpeech = token.partOfSpeech
+    lemma = entry?.headword ?? token.lemma
+    partOfSpeech = entry?.partOfSpeech ?? token.partOfSpeech
     shortGloss = entry?.shortGloss ?? ""
     definition = entry?.definition ?? ""
     sourceVideo = video

@@ -66,13 +66,16 @@ extension StudyModel {
     }
     pendingFavoriteIDs.insert(id)
     let entry = dictionaryEntry
+    let expression = pinnedExpression ?? resolvedExpression
     let video = document?.video
     let date = Date()
     let provider: any DictionaryProvider =
       settings.dictionary == "eijiro" && eijiro != nil ? eijiro! : MacDictionaryProvider()
     mutateLibrary(favoriteID: id) { library in
       let definition: DictionaryEntry?
-      if let entry { definition = entry } else { definition = await provider.lookup(token) }
+      if let entry { definition = entry }
+      else if let expression { definition = await provider.lookupExpressions([expression.tokens]).first ?? nil }
+      else { definition = await provider.lookup(token) }
       try await library.saveFavorite(
         FavoriteWord(token: token, entry: definition, video: video, savedAt: date))
     }

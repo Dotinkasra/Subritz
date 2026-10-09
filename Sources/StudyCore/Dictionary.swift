@@ -5,9 +5,12 @@ import Security
 public struct DictionaryEntry: Sendable {
   public var definition: String
   public var shortGloss: String
+  public var headword: String? = nil
+  public var partOfSpeech: String? = nil
 }
 public protocol DictionaryProvider: Sendable {
   func lookup(_ token: Token) async -> DictionaryEntry?
+  func lookupExpressions(_ expressions: [[Token]]) async -> [DictionaryEntry?]
 }
 public enum DictionaryText {
   public static func candidates(_ token: Token) -> [String] {
@@ -153,21 +156,50 @@ enum EijiroText {
     return DictionaryEntry(definition: detailed, shortGloss: gloss.isEmpty ? "日本語の語義なし" : gloss)
   }
 }
+private enum MacDictionaryAccess {
+  static let lock = NSLock()
+  static func entry(for word: String) -> DictionaryEntry? {
+    // DictionaryServices shares its active-dictionary state across callers.
+    lock.lock()
+    defer { lock.unlock() }
+    let range = CFRange(location: 0, length: (word as NSString).length)
+    guard let value = DCSCopyTextDefinition(nil, word as CFString, range)?.takeRetainedValue()
+    else { return nil }
+    if word.contains(" ") {
+      // Initialize the service through CopyTextDefinition first, and do not ask
+      // for a term range when there are no active definitions.
+      let detected = DCSGetTermRangeInString(nil, word as CFString, 0)
+      guard detected.location == 0, detected.length == range.length else { return nil }
+    }
+    let text = value as String
+    return DictionaryEntry(definition: text, shortGloss: DictionaryText.gloss(text), headword: word,
+      partOfSpeech: word.contains(" ") ? "複数語表現" : nil)
+  }
+}
 public struct MacDictionaryProvider: DictionaryProvider {
   public init() {}
   public func lookup(_ token: Token) async -> DictionaryEntry? {
     await Task.detached {
       for word in DictionaryText.candidates(token) {
-        if let value = DCSCopyTextDefinition(
-          nil, word as CFString, CFRange(location: 0, length: (word as NSString).length))?
-          .takeRetainedValue()
-        {
-          let text = value as String
-          return DictionaryEntry(definition: text, shortGloss: DictionaryText.gloss(text))
-        }
+        if let entry = MacDictionaryAccess.entry(for: word) { return entry }
       }
       return nil
     }.value
+  }
+  public func lookupExpressions(_ expressions: [[Token]]) async -> [DictionaryEntry?] {
+    let task = Task.detached { () -> [DictionaryEntry?] in
+      var results: [DictionaryEntry?] = []
+      for tokens in expressions {
+        var found: DictionaryEntry?
+        for word in DictionaryExpressions.candidates(tokens) {
+          guard !Task.isCancelled else { return Array(repeating: nil, count: expressions.count) }
+          if let entry = MacDictionaryAccess.entry(for: word) { found = entry; break }
+        }
+        results.append(found)
+      }
+      return results
+    }
+    return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
   }
 }
 public actor EijiroProvider: DictionaryProvider {
@@ -264,7 +296,17 @@ public actor EijiroProvider: DictionaryProvider {
     guard visited.count < 5, !visited.contains(normalized) else { return nil }
     let senses = senses(for: word)
     guard !senses.isEmpty else { return nil }
-    let direct = EijiroText.entry(senses, pos: pos)
+    var direct = EijiroText.entry(senses, pos: pos)
+    direct.headword = word
+    if word.contains(" ") {
+      let labels = senses.compactMap(\.label)
+      if labels.contains(where: { $0.contains("動") }) { direct.partOfSpeech = "句動詞" }
+      else if labels.contains("名") { direct.partOfSpeech = "名詞" }
+      else if labels.contains("形") { direct.partOfSpeech = "形容詞" }
+      else if labels.contains("副") { direct.partOfSpeech = "副詞" }
+      else if labels.contains("前") { direct.partOfSpeech = "前置詞句" }
+      else { direct.partOfSpeech = "複数語表現" }
+    }
     let meanings = EijiroText.meanings(senses, pos: pos)
     if let first = meanings.first, let reference = EijiroText.reference(first.definition),
       let resolved = resolve(reference, pos: pos, visited: visited.union([normalized])),
@@ -272,7 +314,7 @@ public actor EijiroProvider: DictionaryProvider {
     {
       return DictionaryEntry(
         definition: direct.definition + "\n\n参照先: " + reference + "\n" + resolved.definition,
-        shortGloss: resolved.shortGloss)
+        shortGloss: resolved.shortGloss, headword: reference, partOfSpeech: direct.partOfSpeech)
     }
     return direct
   }
@@ -285,6 +327,41 @@ public actor EijiroProvider: DictionaryProvider {
       }
     }
     return fallback
+  }
+  public func lookupExpressions(_ expressions: [[Token]]) async -> [DictionaryEntry?] {
+    let forms = expressions.map { DictionaryExpressions.candidates($0) }
+    let words = Array(Set(forms.flatMap { $0 }.map(DictionaryText.normalize))).sorted()
+    var present = Set<String>()
+    // Batched indexed lookups also cover dictionaries imported before POS tags
+    // were removed from normalized_headword. Never scan the whole dictionary.
+    for start in stride(from: 0, to: words.count, by: 50) {
+      guard !Task.isCancelled else { return Array(repeating: nil, count: expressions.count) }
+      let chunk = words[start..<min(start + 50, words.count)]
+      var predicates: [String] = []
+      var values: [String] = []
+      for word in chunk {
+        predicates.append("normalized_headword=?")
+        values.append(word)
+        for spaces in ["", " ", "  ", "　"] {
+          predicates.append("(normalized_headword>=? AND normalized_headword<?)")
+          values += [word + spaces + "{", word + spaces + "|"]
+        }
+      }
+      let rows = (try? db.rows(
+        "SELECT headword,definition FROM entries WHERE " + predicates.joined(separator: " OR "),
+        values: values)) ?? []
+      for row in rows {
+        present.insert(DictionaryText.normalize(EijiroText.sense(row[0], row[1]).headword))
+      }
+    }
+    return forms.map { candidates in
+      for word in candidates where present.contains(DictionaryText.normalize(word)) {
+        if let entry = resolve(word, pos: nil, visited: []), entry.shortGloss != "日本語の語義なし" {
+          return entry
+        }
+      }
+      return nil
+    }
   }
 }
 public enum APISecret {
