@@ -141,6 +141,7 @@ struct MainView: View {
   }
   func timestamp(_ t: Double) -> String {
     let n = Int(max(0, t))
+    if n >= 3600 { return String(format: "%d:%02d:%02d", n / 3600, (n / 60) % 60, n % 60) }
     return String(format: "%d:%02d", n / 60, n % 60)
   }
 }
