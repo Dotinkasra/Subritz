@@ -45,8 +45,11 @@ import SwiftUI
   @Published var libraryError: String?
   @Published var videoHistory: [VideoHistoryItem] = []
   @Published var favoriteWords: [FavoriteWord] = []
+  @Published var videoTimestamps: [VideoTimestamp] = []
+  @Published var savingBookmark = false
+  @Published var timestampMessage = ""
   @Published var pendingFavoriteIDs = Set<String>()
-  @Published var pendingHistory: VideoHistoryItem?
+  @Published var pendingLibraryPlayback: LibraryPlaybackRequest?
   var library: LibraryStore?
   var libraryStartup: Task<LibraryStore, Error>?
   var libraryOperation: Task<Void, Never>?
@@ -80,6 +83,7 @@ import SwiftUI
   var selectedDictionaryID: UUID?
   var lastPriorityTime: Double = -300
   var activeSentenceIndex: Int?
+  var initialPlaybackTime: Double = 0
   init(prepareStorage: Bool = true, defaults: UserDefaults = .standard) {
     self.defaults = defaults
     settings = AppSettings.load(defaults: defaults)
@@ -98,13 +102,13 @@ import SwiftUI
       } catch { self.error = "永続データを開けませんでした：" + error.localizedDescription }
     }
   }
-  func load() {
-    guard !isChangingCacheDirectory else { return }
+  @discardableResult func load(startTime: Double = 0) -> Bool {
+    guard !isChangingCacheDirectory, startTime.isFinite, startTime >= 0 else { return false }
     phase = .validatingURL
     let id: String
     do { id = try YouTubeURL.id(url) } catch {
       self.error = error.localizedDescription
-      return
+      return false
     }
     loadTask?.cancel()
     backgroundTask?.cancel()
@@ -137,7 +141,10 @@ import SwiftUI
     selectedDictionaryID = nil
     activeSentenceIndex = nil
     lastPriorityTime = -300
-    time = 0
+    initialPlaybackTime = startTime
+    time = startTime
+    duration = 0
+    timestampMessage = ""
     let config = settings
     grammarEnabledForVideo = config.aiGrammarEnabled
     loadTask = Task {
@@ -200,6 +207,7 @@ import SwiftUI
         stage = "読み込みに失敗しました"
       }
     }
+    return true
   }
   func retryCurrentGrammar() {
     guard grammarEnabledForVideo else { return }
@@ -235,6 +243,8 @@ import SwiftUI
     }
   }
   func continuePlayback() {
+    let start = duration > 0 ? min(initialPlaybackTime, duration) : initialPlaybackTime
+    bridge.prepareForVideo(at: start)
     loading = false
     ready = true
     phase = .ready
@@ -243,6 +253,7 @@ import SwiftUI
       ? "再生できます。文法は現在位置の前後から解析します"
       : "再生できます。AI文法解析はOFFです"
     if let d = document { timeline = Timeline(d.sentences) }
+    update(time: start, duration: duration, state: 2)
     recordCurrentVideo()
     prefetchDictionary(at: time)
     startBackground()
@@ -473,6 +484,14 @@ import SwiftUI
     hoverToken = nil
     lookup()
   }
+  func toggleDictionarySelection(_ token: Token) {
+    guard token.lexical else { return }
+    if dictionarySelectionContains(token) {
+      releaseDictionaryPin()
+    } else {
+      pinDictionary(token)
+    }
+  }
   func releaseDictionaryPin() {
     pinnedToken = nil
     pinnedExpression = nil
@@ -592,12 +611,14 @@ import SwiftUI
     }
   }
   func closeVideo() {
+    saveExitTimestamp()
     loadTask?.cancel()
     backgroundTask?.cancel()
     dictionaryTask?.cancel()
     dictionaryPrefetchTask?.cancel()
     bridge.pause()
     bridge.stopClock()
+    bridge.invalidateVideo()
     session = UUID()
     scheduler = nil
     backgroundRunning = false
@@ -623,6 +644,7 @@ import SwiftUI
     fingerprint = ""
     lastPriorityTime = -300
     time = 0
+    initialPlaybackTime = 0
     duration = 0
     error = nil
     errorDetails = nil
@@ -631,7 +653,8 @@ import SwiftUI
     phase = .idle
     stage = "YouTube の英語動画 URL を入力してください"
     confirmCloseVideo = false
-    pendingHistory = nil
+    pendingLibraryPlayback = nil
+    timestampMessage = ""
   }
   func saveSettings(previous: AppSettings? = nil) {
     guard settings.timeout.isFinite, (5...3600).contains(settings.timeout) else {

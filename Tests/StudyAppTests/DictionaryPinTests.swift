@@ -102,4 +102,27 @@ import Testing
     model.pinDictionary(punctuation)
     #expect(model.pinnedToken?.id == words[0].id)
   }
+  @Test(arguments: [false, true]) func secondClickClearsSelectionAndRestoresDictionaryMode(realtime: Bool) throws {
+    let (model, words) = try fixture(realtime: realtime)
+    model.toggleDictionarySelection(words[2])
+    #expect(model.pinnedToken?.id == words[2].id)
+    model.toggleDictionarySelection(words[3])
+    #expect(model.pinnedToken?.id == words[3].id)
+    model.toggleDictionarySelection(words[3])
+    #expect(!model.dictionaryIsPinned && model.hoverToken == nil)
+    #expect(model.displayedToken?.id == (realtime ? words[0].id : nil))
+    #expect(model.dictionaryEntry?.shortGloss == (realtime ? words[0].surface : nil))
+    #expect(model.time == 0.1 && !model.playing)
+  }
+  @Test func clickingSelectedRangeClearsItAndDraggingCanSelectAgain() throws {
+    let (model, words) = try fixture(realtime: false)
+    model.pinDictionaryRange(from: words[0].id, to: words[1].id)
+    model.toggleDictionarySelection(words[1])
+    #expect(!model.dictionaryIsPinned && model.displayedToken == nil)
+    model.pinDictionaryRange(from: words[1].id, to: words[1].id)
+    model.pinDictionaryRange(from: words[1].id, to: words[1].id)
+    #expect(model.pinnedToken?.id == words[1].id)
+    model.pinDictionaryRange(from: words[1].id, to: words[0].id)
+    #expect(model.pinnedExpression?.tokens.map(\.id) == [words[0].id, words[1].id])
+  }
 }

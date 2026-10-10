@@ -9,6 +9,7 @@ public struct DictionaryEntry: Sendable {
   public var partOfSpeech: String? = nil
   public var sections: [DictionarySection] = []
   public var pronunciation: String? = nil
+  public var expandedForms: [String] = []
 }
 public struct DictionarySection: Sendable {
   public var partOfSpeech: String
@@ -26,12 +27,13 @@ public protocol DictionaryProvider: Sendable {
 public enum DictionaryText {
   public static func candidates(_ token: Token) -> [String] {
     var seen = Set<String>()
-    return [token.surface, token.normalized, token.lemma, token.lemma?.lowercased()].compactMap {
+    return [token.surface, token.normalized, normalize(token.surface), token.lemma, token.lemma?.lowercased()].compactMap {
       $0
     }.filter { seen.insert($0).inserted }
   }
   public static func normalize(_ text: String) -> String {
     text.precomposedStringWithCanonicalMapping.trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: "’", with: "'").replacingOccurrences(of: "‘", with: "'")
       .lowercased()
   }
   public static func paragraphs(_ definition: String) -> [String] {
@@ -102,7 +104,9 @@ enum EijiroText {
   }
   static func matches(_ sense: Sense, pos: String?) -> Bool {
     let wanted = labels(for: pos)
-    return wanted.isEmpty
+    // A contraction represents more than one word, so the first token's POS
+    // (often Pronoun) cannot be used to exclude its abbreviation record.
+    return sense.label == "省略形" || wanted.isEmpty
       || sense.label.map {
         !wanted.isDisjoint(with: $0.components(separatedBy: "・"))
       } == true
@@ -117,17 +121,25 @@ enum EijiroText {
     .trimmingCharacters(in: .whitespacesAndNewlines)
   }
   static func reference(_ value: String) -> String? {
+    references(value).first
+  }
+  static func references(_ value: String) -> [String] {
     let text = meaning(value)
-    if text.hasPrefix("＝<→"), let end = text.firstIndex(of: ">") {
-      return String(text[text.index(text.startIndex, offsetBy: 3)..<end])
+    if text.hasPrefix("＝<→") || text.hasPrefix("=<→") {
+      let regex = try! NSRegularExpression(pattern: #"<→([^<>]+)>"#)
+      let ns = text as NSString
+      var seen = Set<String>()
+      return regex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        .map { ns.substring(with: $0.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && seen.insert(DictionaryText.normalize($0)).inserted }
     }
     // is / went など、辞書自身が説明している活用元。
     let regex = try! NSRegularExpression(pattern: #"^([A-Za-z][A-Za-z'-]*)の.*(?:形|分詞)$"#)
     let ns = text as NSString
     if let match = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) {
-      return ns.substring(with: match.range(at: 1))
+      return [ns.substring(with: match.range(at: 1))]
     }
-    return nil
+    return []
   }
   static func ordered(_ senses: [Sense]) -> [Sense] {
     // 品詞ごとのまとまりを保持し、10番を2番より先に表示しない。
@@ -289,6 +301,29 @@ public actor EijiroProvider: DictionaryProvider {
     guard !senses.isEmpty else { return nil }
     var direct = EijiroText.entry(senses, pos: pos)
     direct.headword = word
+    let abbreviations = EijiroText.ordered(senses).filter { $0.label == "省略形" }
+    if !abbreviations.isEmpty {
+      direct.partOfSpeech = "省略形"
+      var seen = Set<String>()
+      let forms = abbreviations.flatMap { EijiroText.references($0.definition) }
+        .filter { seen.insert(DictionaryText.normalize($0)).inserted }
+      direct.expandedForms = forms
+      if !forms.isEmpty {
+        direct.definition = "省略前の形: " + forms.joined(separator: " / ") + "\n\n" + direct.definition
+        var glosses: [String] = []
+        for form in forms {
+          // The expansion's POS may differ from the original contracted token.
+          guard let resolved = resolve(form, pos: nil, visited: visited.union([normalized])),
+            resolved.shortGloss != "日本語の語義なし" else { continue }
+          direct.definition += "\n\n参照先: " + form + "\n" + resolved.definition
+          if !glosses.contains(resolved.shortGloss) { glosses.append(resolved.shortGloss) }
+        }
+        if direct.shortGloss != "日本語の語義なし" { glosses.insert(direct.shortGloss, at: 0) }
+        direct.shortGloss = glosses.isEmpty
+          ? forms.joined(separator: " / ") + " の省略形" : glosses.joined(separator: "、")
+      }
+      return direct
+    }
     if word.contains(" ") {
       let labels = senses.compactMap(\.label)
       if labels.contains(where: { $0.contains("動") }) { direct.partOfSpeech = "句動詞" }

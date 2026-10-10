@@ -38,7 +38,7 @@ struct SubtitleWordButton: NSViewRepresentable {
     view.selectionScope = selectionScope
     view.onDrag = onDrag
     view.onDragState = onDragState
-    view.toolTip = enabled ? "クリックで辞書を固定 · ドラッグで複数語を選択 · ダブルクリックで発話位置へ移動" : nil
+    view.toolTip = enabled ? "クリックで辞書を固定 · 再クリックまたはEscで選択解除 · ドラッグで複数語を選択 · ダブルクリックで発話位置へ移動" : nil
     view.setAccessibilityLabel(title)
   }
   func sizeThatFits(_ proposal: ProposedViewSize, nsView: WordButton, context: Context) -> CGSize? {

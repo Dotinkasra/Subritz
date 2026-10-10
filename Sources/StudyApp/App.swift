@@ -59,6 +59,12 @@ struct MainView: View {
           VStack(spacing: 8) {
             YouTubePlayer(videoID: document.video.id, bridge: model.bridge).id(model.session)
             HStack {
+              Button { model.saveBookmark() } label: {
+                if model.savingBookmark { ProgressView().controlSize(.small).frame(width: 16, height: 16) }
+                else { Image(systemName: "bookmark") }
+              }.disabled(!model.canSaveBookmark)
+                .help("現在の再生位置にしおりを追加")
+                .accessibilityLabel("しおりを追加")
               Button {
                 model.playing ? model.bridge.pause() : model.bridge.play()
               } label: {
@@ -70,7 +76,12 @@ struct MainView: View {
                 in: 0...max(1, model.duration))
               Text(timestamp(model.duration)).monospacedDigit().font(.caption)
             }
-            Text(document.video.title).font(.caption).lineLimit(2)
+            HStack {
+              Text(document.video.title).lineLimit(2)
+              if !model.timestampMessage.isEmpty {
+                Text(model.timestampMessage).foregroundStyle(.secondary).lineLimit(1)
+              }
+            }.font(.caption)
           }.padding(12).frame(maxWidth: .infinity)
           Divider()
           DictionaryPane(model: model).frame(maxWidth: .infinity)
@@ -140,9 +151,7 @@ struct MainView: View {
     }
   }
   func timestamp(_ t: Double) -> String {
-    let n = Int(max(0, t))
-    if n >= 3600 { return String(format: "%d:%02d:%02d", n / 3600, (n / 60) % 60, n % 60) }
-    return String(format: "%d:%02d", n / 60, n % 60)
+    PlaybackTime.format(t)
   }
 }
 struct GrammarLoadOption: View {
@@ -222,8 +231,13 @@ struct DictionaryPane: View {
               if !model.realtimeEnglishOnly {
                 Text(pos(model.dictionaryEntry?.partOfSpeech ?? token.partOfSpeech)).font(.system(size: 22, weight: .medium))
                   .foregroundStyle(.secondary)
+                if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
+                  Text("省略前：" + entry.expandedForms.joined(separator: " / "))
+                    .font(.system(size: 18)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                }
                 if let headword = model.dictionaryEntry?.headword,
-                  DictionaryText.normalize(headword) != token.normalized {
+                  DictionaryText.normalize(headword) != DictionaryText.normalize(token.normalized) {
                   Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
                 }
                 if let entry = model.dictionaryEntry {
@@ -269,8 +283,13 @@ struct DictionaryPane: View {
             }
           }
         }
+        if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
+          Text("省略前：" + entry.expandedForms.joined(separator: " / "))
+            .font(.callout).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+        }
         if let headword = model.dictionaryEntry?.headword,
-          DictionaryText.normalize(headword) != token.normalized {
+          DictionaryText.normalize(headword) != DictionaryText.normalize(token.normalized) {
           Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
         }
         Divider()
@@ -432,7 +451,7 @@ struct SubtitleLineView: View {
             SubtitleWordButton(
               title: token.surface, size: current ? 26 : 21, current: current,
               enabled: token.lexical,
-              onClick: { model.pinDictionary(token) }, onDoubleClick: { model.seekToWord(token) },
+              onClick: { model.toggleDictionarySelection(token) }, onDoubleClick: { model.seekToWord(token) },
               selectionID: token.id, selectionScope: model.session,
               onDrag: { endpoint in model.pinDictionaryRange(from: token.id, to: endpoint) },
               onDragState: { model.draggingDictionarySelection = $0 }

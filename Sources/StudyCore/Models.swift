@@ -50,7 +50,7 @@ public struct Sentence: Codable, Identifiable {
   public var grammarStatus: GrammarStatus = .notQueued
   public var grammarAnalysis: Analysis?
 }
-public struct Video: Codable {
+public struct Video: Codable, Sendable {
   public var id: String
   public var title: String
   public var duration: Double

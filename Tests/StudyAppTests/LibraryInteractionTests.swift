@@ -91,33 +91,62 @@ private actor LibraryVideoProvider: YouTubeProvider {
       model.closeVideo()
       try? FileManager.default.removeItem(at: root)
     }
-    model.settings.localModel = ""  // Prevent external LLM requests in this test.
+    model.settings.aiGrammarEnabled = false  // Prevent external LLM requests in this test.
     let provider = LibraryVideoProvider()
     model.youtubeProviderOverride = provider
     let item = VideoHistoryItem(
       video: Video(id: "abcdefghijk", title: "History title", duration: 2))
     let originalSession = model.session
-    model.selectHistory(item)
-    #expect(model.pendingHistory?.id == item.id && model.session == originalSession)
+    #expect(!model.selectHistory(item))
+    #expect(model.pendingLibraryPlayback?.video.id == item.id && model.session == originalSession)
     #expect(await provider.calls().isEmpty)
-    model.pendingHistory = nil  // cancel leaves the current video untouched
+    model.pendingLibraryPlayback = nil  // cancel leaves the current video untouched
     #expect(model.document?.video.id == "test" && model.ready)
-    model.selectHistory(item)
-    model.confirmHistoryLoad()
+    #expect(!model.selectHistory(item))
+    #expect(model.confirmLibraryPlayback())
     await model.loadTask?.value
     await model.libraryOperation?.value
     #expect(await provider.calls() == [item.id])
     #expect(model.url == item.video.watchURL && model.document?.video.id == item.id && model.ready)
     #expect(model.videoHistory.first?.video.title == "Loaded from history")
   }
+  @Test func historyWithoutOpenVideoStartsImmediatelyAndBlockedLoadsDoNotDismiss() async throws {
+    let (model, root) = try libraryModel()
+    defer {
+      model.closeVideo()
+      try? FileManager.default.removeItem(at: root)
+    }
+    model.closeVideo()
+    model.settings.aiGrammarEnabled = false
+    let provider = LibraryVideoProvider()
+    model.youtubeProviderOverride = provider
+    let item = VideoHistoryItem(video: Video(id: "abcdefghijk", title: "History", duration: 2))
+    model.isChangingCacheDirectory = true
+    #expect(!model.selectHistory(item) && !model.hasOpenVideo)
+    #expect(!model.confirmLibraryPlayback(LibraryPlaybackRequest(video: item.video, time: 0)))
+    #expect(await provider.calls().isEmpty)
+    model.isChangingCacheDirectory = false
+    let invalid = VideoHistoryItem(video: Video(id: "invalid", title: "Invalid", duration: 2))
+    #expect(!model.selectHistory(invalid) && !model.hasOpenVideo)
+    #expect(await provider.calls().isEmpty)
+    #expect(model.selectHistory(item))
+    #expect(model.loading && model.pendingLibraryPlayback == nil)
+    await model.loadTask?.value
+    await model.libraryOperation?.value
+    #expect(model.ready && model.document?.video.id == item.id)
+    #expect(await provider.calls() == [item.id])
+  }
   @Test func nativeSingleClickPinsAndDoubleClickSeeksWithoutStartingPausedVideo() throws {
     let (model, _) = try DictionaryPinTests().fixture(realtime: false)
     let token = model.timeline!.tokens[3]  // read, at 1.45 seconds
     let button = SubtitleWordButton.WordButton(frame: .zero)
-    button.onClick = { model.pinDictionary(token) }
+    button.onClick = { model.toggleDictionarySelection(token) }
     button.onDoubleClick = { model.seekToWord(token) }
     button.clicked()
     #expect(model.pinnedToken?.id == token.id && model.time == 0.1)
+    button.clicked()
+    #expect(!model.dictionaryIsPinned && model.time == 0.1)
+    button.clicked()
     let event = try #require(
       NSEvent.mouseEvent(
         with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 1, windowNumber: 0,

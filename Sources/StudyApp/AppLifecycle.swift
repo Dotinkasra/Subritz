@@ -3,12 +3,30 @@ import SwiftUI
 
 @MainActor final class AppLifecycle: NSObject, NSApplicationDelegate {
   weak var model: StudyModel?
+  private var terminating = false
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    if terminating { return .terminateLater }
     guard let model else { return .terminateNow }
     guard !model.hasOpenVideo || confirmVideoExit(quitting: true) else { return .terminateCancel }
     model.flushAPIKey()
     model.closeVideo()
-    return .terminateNow
+    terminating = true
+    Task {
+      await model.libraryOperation?.value
+      var shouldQuit = true
+      if let error = model.libraryError {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "学習記録を保存できませんでした"
+        alert.informativeText = error + "\n保存されていない記録がある可能性があります。終了しますか？"
+        alert.addButton(withTitle: "終了しない")
+        alert.addButton(withTitle: "終了")
+        shouldQuit = alert.runModal() == .alertSecondButtonReturn
+      }
+      terminating = false
+      sender.reply(toApplicationShouldTerminate: shouldQuit)
+    }
+    return .terminateLater
   }
 }
 
@@ -33,6 +51,10 @@ struct MainWindowLifecycle: NSViewRepresentable {
     return probe
   }
   func updateNSView(_ view: WindowProbe, context: Context) {}
+  static func dismantleNSView(_ view: WindowProbe, coordinator: Coordinator) {
+    view.onWindow = nil
+    coordinator.detach()
+  }
   final class WindowProbe: NSView {
     var onWindow: ((NSWindow) -> Void)?
     override func viewDidMoveToWindow() {
@@ -43,12 +65,37 @@ struct MainWindowLifecycle: NSViewRepresentable {
   @MainActor final class Coordinator: NSObject, NSWindowDelegate {
     weak var model: StudyModel?
     weak var originalDelegate: NSWindowDelegate?
+    weak var window: NSWindow?
+    private var keyMonitor: Any?
     init(model: StudyModel) { self.model = model }
     func attach(_ window: NSWindow) {
-      guard window.delegate !== self else { return }
+      guard self.window !== window else { return }
+      detach()
+      self.window = window
       originalDelegate = window.delegate
       window.delegate = self
       window.title = "Subritz"
+      // Native subtitle buttons and the embedded player may hold keyboard focus.
+      // Handle Escape only in this window; sheets and other windows keep their own behavior.
+      keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        guard let self else { return event }
+        return self.handleKeyDown(event)
+      }
+    }
+    func detach() {
+      if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+      keyMonitor = nil
+      if window?.delegate === self { window?.delegate = originalDelegate }
+      window = nil
+      originalDelegate = nil
+    }
+    func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+      guard event.keyCode == 53,
+        event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+        let window, event.window === window, window.attachedSheet == nil,
+        let model, model.dictionaryIsPinned else { return event }
+      model.releaseDictionaryPin()
+      return nil
     }
     override func responds(to selector: Selector!) -> Bool {
       super.responds(to: selector) || (originalDelegate?.responds(to: selector) ?? false)
@@ -100,6 +147,10 @@ struct SubritzCommands: Commands {
         model.librarySection = .history
         openWindow(id: "library")
       }.keyboardShortcut("h", modifiers: [.command, .shift])
+      Button(String(localized: "Timestamps")) {
+        model.librarySection = .timestamps
+        openWindow(id: "library")
+      }
       Button(String(localized: "Favorite Words")) {
         model.librarySection = .favorites
         openWindow(id: "library")

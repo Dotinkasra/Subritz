@@ -95,4 +95,33 @@ import Testing
     model.closeVideo()
     #expect(model.pinnedExpression == nil && model.resolvedExpression == nil)
   }
+  @Test(arguments: [false, true]) func contractionMeaningAndExpansionsReachBothDictionaryModes(realtime: Bool) async throws {
+    let (model, defaults, suite) = try SettingsLifecycleTests().isolatedModel()
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { model.closeVideo(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+    let provider = try EijiroProvider(directory: root)
+    let file = root.appendingPathComponent("authored.txt")
+    try "■there's {省略形-1} : ＝<→there is>、<→there has>\n■there is {動} : 自作表示義A".write(to: file, atomically: true, encoding: .utf8)
+    _ = try await provider.importFile(file)
+    let raw = Data(#"{"events":[{"tStartMs":0,"dDurationMs":5000,"segs":[{"utf8":"There's a copper tower."}]}]}"#.utf8)
+    let sentences = try CaptionPipeline().parse(raw, videoID: "test")
+    model.document = StudyDocument(video: Video(id: "test", title: "Test", duration: 5), rawCaption: raw, sentences: sentences)
+    model.timeline = Timeline(sentences)
+    model.eijiro = provider
+    model.settings.dictionary = "eijiro"
+    model.grammarEnabledForVideo = false
+    model.ready = true
+    model.realtime = realtime
+    let token = try #require(model.timeline?.tokens.first)
+    model.update(time: 0.01, duration: 5, state: 2)
+    if !realtime { model.hover(token) }
+    await model.dictionaryTask?.value
+    #expect(model.displayedToken?.surface == "There's")
+    #expect(model.dictionaryEntry?.shortGloss == "自作表示義A")
+    #expect(model.dictionaryEntry?.expandedForms == ["there is", "there has"])
+    model.toggleDictionarySelection(token)
+    await model.dictionaryTask?.value
+    #expect(model.dictionaryIsPinned && model.dictionaryEntry?.partOfSpeech == "省略形")
+    #expect(model.dictionaryEntry?.shortGloss == "自作表示義A")
+  }
 }

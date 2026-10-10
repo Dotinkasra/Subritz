@@ -1,7 +1,12 @@
 import StudyCore
 import SwiftUI
 
-enum LibrarySection: String, CaseIterable { case history, favorites }
+enum LibrarySection: String, CaseIterable { case history, timestamps, favorites }
+struct LibraryPlaybackRequest: Identifiable {
+  let id = UUID()
+  let video: Video
+  let time: Double
+}
 
 extension StudyModel {
   func startLibrary() {
@@ -16,29 +21,35 @@ extension StudyModel {
           try await library?.seedHistoryIfNeeded(cache.recentHistory())
         }
         try await refreshLibrary()
-      } catch { libraryError = "履歴・お気に入りを開けませんでした：" + error.localizedDescription }
+      } catch { libraryError = "ライブラリを開けませんでした：" + error.localizedDescription }
     }
   }
   func refreshLibrary() async throws {
     guard let library else { return }
     let history = try await library.history()
     let favorites = try await library.favorites()
+    let timestamps = try await library.timestamps()
     videoHistory = history
     favoriteWords = favorites
+    videoTimestamps = timestamps
   }
   func mutateLibrary(
-    favoriteID: String? = nil, _ operation: @escaping (LibraryStore) async throws -> Void
+    favoriteID: String? = nil, completion: (() -> Void)? = nil,
+    _ operation: @escaping (LibraryStore) async throws -> Void
   ) {
     let previous = libraryOperation
     libraryOperation = Task {
       await previous?.value
       libraryError = nil
-      defer { if let favoriteID { pendingFavoriteIDs.remove(favoriteID) } }
+      defer {
+        if let favoriteID { pendingFavoriteIDs.remove(favoriteID) }
+        completion?()
+      }
       do {
-        guard let library else { throw AppFailure("履歴・お気に入りが準備できていません") }
+        guard let library else { throw AppFailure("ライブラリが準備できていません") }
         try await operation(library)
         try await refreshLibrary()
-      } catch { libraryError = "履歴・お気に入りを保存できませんでした：" + error.localizedDescription }
+      } catch { libraryError = "ライブラリを保存できませんでした：" + error.localizedDescription }
     }
   }
   func recordCurrentVideo() {
@@ -90,19 +101,72 @@ extension StudyModel {
   func removeHistory(_ item: VideoHistoryItem) {
     mutateLibrary { try await $0.removeHistory(item.id) }
   }
-  func selectHistory(_ item: VideoHistoryItem) {
-    guard !isChangingCacheDirectory else { return }
-    if hasOpenVideo { pendingHistory = item } else { openHistory(item) }
+  @discardableResult func selectHistory(_ item: VideoHistoryItem) -> Bool {
+    requestLibraryPlayback(video: item.video, at: 0)
   }
-  func confirmHistoryLoad(_ target: VideoHistoryItem? = nil) {
-    guard let item = target ?? pendingHistory, !isChangingCacheDirectory else { return }
+  @discardableResult func selectTimestamp(_ item: VideoTimestamp) -> Bool {
+    requestLibraryPlayback(video: item.video, at: item.time)
+  }
+  @discardableResult func requestLibraryPlayback(video: Video, at time: Double) -> Bool {
+    guard !isChangingCacheDirectory, time.isFinite, time >= 0 else { return false }
+    do { _ = try YouTubeURL.id(video.watchURL) } catch {
+      libraryError = error.localizedDescription
+      return false
+    }
+    let request = LibraryPlaybackRequest(video: video, time: time)
+    if hasOpenVideo {
+      pendingLibraryPlayback = request
+      return false
+    }
+    return openLibraryPlayback(request)
+  }
+  @discardableResult func confirmLibraryPlayback(_ target: LibraryPlaybackRequest? = nil) -> Bool {
+    guard let request = target ?? pendingLibraryPlayback, !isChangingCacheDirectory else { return false }
+    pendingLibraryPlayback = nil
+    if ready, document?.video.id == request.video.id {
+      releaseDictionaryPin()
+      seek(duration > 0 ? min(request.time, duration) : request.time)
+      return true
+    }
     closeVideo()
-    openHistory(item)
+    return openLibraryPlayback(request)
   }
-  func openHistory(_ item: VideoHistoryItem) {
-    pendingHistory = nil
-    url = item.video.watchURL
-    load()
+  @discardableResult func openLibraryPlayback(_ request: LibraryPlaybackRequest) -> Bool {
+    pendingLibraryPlayback = nil
+    url = request.video.watchURL
+    return load(startTime: request.time)
+  }
+  var canSaveBookmark: Bool {
+    ready && document != nil && time.isFinite && time >= 0 && !savingBookmark
+      && (library != nil || libraryStartup != nil)
+  }
+  func saveBookmark() {
+    guard canSaveBookmark, let video = document?.video else { return }
+    let timestamp = VideoTimestamp(video: video, time: time)
+    savingBookmark = true
+    timestampMessage = "しおりを保存しています…"
+    let sid = session
+    mutateLibrary(completion: {
+      self.savingBookmark = false
+      if sid == self.session {
+        self.timestampMessage = self.libraryError == nil
+          ? "しおりを保存しました（" + PlaybackTime.format(timestamp.time) + "）" : ""
+      }
+    }) { try await $0.saveTimestamp(timestamp) }
+  }
+  func saveExitTimestamp() {
+    guard ready, let video = document?.video, time.isFinite, time >= 0,
+      library != nil || libraryStartup != nil else { return }
+    let timestamp = VideoTimestamp(video: video, time: time, kind: .resume)
+    mutateLibrary { try await $0.saveTimestamp(timestamp) }
+  }
+  func removeTimestamp(_ item: VideoTimestamp) {
+    mutateLibrary { try await $0.removeTimestamp(item.id) }
+  }
+  func occurrence(of word: FavoriteWord) -> VideoTimestamp? {
+    guard let video = word.sourceVideo, word.sourceTime.isFinite, word.sourceTime >= 0 else { return nil }
+    return VideoTimestamp(video: video, time: word.sourceTime, kind: .favorite,
+      wordID: word.id, savedAt: word.savedAt)
   }
   func seekToWord(_ token: Token) {
     guard ready, token.lexical, token.startTime.isFinite, token.startTime >= 0,
