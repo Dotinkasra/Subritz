@@ -34,8 +34,15 @@ import SwiftUI
   var expressionMisses = Set<UUID>()
   @Published var dictionaryEntry: DictionaryEntry?
   @Published var realtime = true
-  @Published var time: Double = 0
-  @Published var duration: Double = 0
+  let playbackPosition = PlaybackPosition()
+  var time: Double {
+    get { playbackPosition.time }
+    set { playbackPosition.time = newValue }
+  }
+  var duration: Double {
+    get { playbackPosition.duration }
+    set { playbackPosition.duration = newValue }
+  }
   @Published var playing = false
   @Published var cacheUsage = 0
   @Published var eijiroCount = 0

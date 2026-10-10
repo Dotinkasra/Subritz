@@ -73,31 +73,7 @@ struct MainView: View {
                     .accessibilityElement(children: .combine)
                 }
               }
-            HStack {
-              Button { model.saveBookmark() } label: {
-                if model.savingBookmark { ProgressView().controlSize(.small).frame(width: 16, height: 16) }
-                else { Image(systemName: "bookmark") }
-              }.disabled(!model.canSaveBookmark)
-                .help("現在の再生位置にしおりを追加")
-                .accessibilityLabel("しおりを追加")
-              Button {
-                model.playing ? model.bridge.pause() : model.bridge.play()
-              } label: {
-                Image(systemName: model.playing ? "pause.fill" : "play.fill")
-              }
-              Text(timestamp(model.time)).monospacedDigit().font(.caption)
-              Slider(
-                value: Binding(get: { model.time }, set: { model.seek($0) }),
-                in: 0...max(1, model.duration))
-              Text(timestamp(model.duration)).monospacedDigit().font(.caption)
-              Button {
-                videoHidden.toggle()
-              } label: {
-                Image(systemName: videoHidden ? "eye" : "eye.slash")
-              }
-              .help(videoHidden ? "映像を表示" : "映像を非表示（音声・字幕・シークは継続）")
-              .accessibilityLabel(videoHidden ? "映像を表示" : "映像を非表示")
-            }
+            PlaybackControls(model: model, position: model.playbackPosition, videoHidden: $videoHidden)
             HStack {
               Text(document.video.title).lineLimit(2)
               if !model.timestampMessage.isEmpty {
@@ -172,9 +148,6 @@ struct MainView: View {
     } message: {
       Text("字幕の解析と再生を終了し、URL入力画面に戻ります。保存済みのキャッシュは残ります。")
     }
-  }
-  func timestamp(_ t: Double) -> String {
-    PlaybackTime.format(t)
   }
 }
 struct GrammarLoadOption: View {
@@ -417,6 +390,40 @@ struct DictionaryPane: View {
     case "Determiner": return "限定詞"
     case "Conjunction": return "接続詞"
     default: return value ?? "品詞不明"
+    }
+  }
+}
+/// Only the seek controls observe frequent clock updates. The subtitle and dictionary
+/// continue to observe word, line, selection, and analysis changes through StudyModel.
+struct PlaybackControls: View {
+  @ObservedObject var model: StudyModel
+  @ObservedObject var position: PlaybackPosition
+  @Binding var videoHidden: Bool
+  var body: some View {
+    HStack {
+      Button { model.saveBookmark() } label: {
+        if model.savingBookmark { ProgressView().controlSize(.small).frame(width: 16, height: 16) }
+        else { Image(systemName: "bookmark") }
+      }.disabled(!model.canSaveBookmark)
+        .help("現在の再生位置にしおりを追加")
+        .accessibilityLabel("しおりを追加")
+      Button {
+        model.playing ? model.bridge.pause() : model.bridge.play()
+      } label: {
+        Image(systemName: model.playing ? "pause.fill" : "play.fill")
+      }
+      Text(PlaybackTime.format(position.time)).monospacedDigit().font(.caption)
+      Slider(
+        value: Binding(get: { position.time }, set: { model.seek($0) }),
+        in: 0...max(1, position.duration))
+      Text(PlaybackTime.format(position.duration)).monospacedDigit().font(.caption)
+      Button {
+        videoHidden.toggle()
+      } label: {
+        Image(systemName: videoHidden ? "eye" : "eye.slash")
+      }
+      .help(videoHidden ? "映像を表示" : "映像を非表示（音声・字幕・シークは継続）")
+      .accessibilityLabel(videoHidden ? "映像を表示" : "映像を非表示")
     }
   }
 }
