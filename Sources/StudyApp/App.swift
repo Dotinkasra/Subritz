@@ -26,6 +26,7 @@ struct MainView: View {
       HStack {
         if model.hasOpenVideo {
           Button("閉じる", systemImage: "xmark") { model.confirmCloseVideo = true }
+            .labelStyle(.iconOnly).help("動画を閉じる").accessibilityLabel("動画を閉じる")
           Spacer()
           Text(model.grammarEnabledForVideo ? "AI文法解析 ON" : "AI文法解析 OFF")
             .font(.caption).foregroundStyle(.secondary)
@@ -42,11 +43,11 @@ struct MainView: View {
         Button("動画履歴", systemImage: "clock") {
           model.librarySection = .history
           openWindow(id: "library")
-        }
+        }.labelStyle(.iconOnly).help("動画履歴").accessibilityLabel("動画履歴")
         Button("お気に入り", systemImage: "star") {
           model.librarySection = .favorites
           openWindow(id: "library")
-        }
+        }.labelStyle(.iconOnly).help("単語のお気に入り").accessibilityLabel("単語のお気に入り")
         Button {
           model.showSettings = true
         } label: {
@@ -423,39 +424,20 @@ struct SubtitlePane: View {
   @ObservedObject var model: StudyModel
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack {
+      // Keep the subtitle viewport and row spacing unchanged when search opens or closes.
+      HStack(spacing: 8) {
         Text(model.grammarEnabledForVideo ? "字幕 / 文法" : "字幕").font(.headline)
         Text("ドラッグで複数語を選択").font(.caption).foregroundStyle(.secondary)
         Spacer()
-        Text(model.browsingSubtitleSearch ? "検索結果を表示中" : model.playing ? "再生位置に追従" : "過去・未来へスクロールできます")
-          .font(.caption).foregroundStyle(.secondary)
-        if !model.subtitleSearchVisible {
+        if model.subtitleSearchVisible {
+          searchControls
+        } else {
+          Text(model.playing ? "再生位置に追従" : "過去・未来へスクロールできます")
+            .font(.caption).foregroundStyle(.secondary)
           Button { model.openSubtitleSearch() } label: { Image(systemName: "magnifyingglass") }
             .help("字幕内を検索（⌘F）").accessibilityLabel("字幕内を検索")
         }
-      }
-      if model.subtitleSearchVisible {
-        HStack(spacing: 8) {
-          SubtitleSearchField(query: model.subtitleSearchQuery, focusRequest: model.subtitleSearchFocusRequest,
-            onChange: { model.setSubtitleSearchQuery($0) },
-            onNavigate: { model.navigateSubtitleSearch(backwards: $0) },
-            onClose: { model.closeSubtitleSearch() })
-            .frame(width: 260, height: 24)
-          Text(model.subtitleSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "字幕全体を検索" : model.subtitleSearchResults.matches.isEmpty
-              ? "一致なし" : "\(model.subtitleSearchSelection + 1) / \(model.subtitleSearchResults.matches.count)")
-            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
-          Button { model.navigateSubtitleSearch(backwards: true) } label: { Image(systemName: "chevron.up") }
-            .help("前の検索結果（Shift+Enter）").accessibilityLabel("前の検索結果")
-            .disabled(model.subtitleSearchResults.matches.isEmpty)
-          Button { model.navigateSubtitleSearch() } label: { Image(systemName: "chevron.down") }
-            .help("次の検索結果（Enter）").accessibilityLabel("次の検索結果")
-            .disabled(model.subtitleSearchResults.matches.isEmpty)
-          Spacer()
-          Button { model.closeSubtitleSearch() } label: { Image(systemName: "xmark") }
-            .help("検索を閉じて再生位置へ戻る（Esc）").accessibilityLabel("字幕検索を閉じる")
-        }
-      }
+      }.frame(height: 28)
       ScrollViewReader { proxy in
         GeometryReader { geometry in
           ScrollView {
@@ -483,6 +465,27 @@ struct SubtitlePane: View {
         }
       }
     }.padding(16).background(Color(nsColor: .windowBackgroundColor))
+  }
+  private var searchControls: some View {
+    HStack(spacing: 8) {
+      Text(model.subtitleSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? "字幕全体を検索" : model.subtitleSearchResults.matches.isEmpty
+          ? "一致なし" : "\(model.subtitleSearchSelection + 1) / \(model.subtitleSearchResults.matches.count)")
+        .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+      SubtitleSearchField(query: model.subtitleSearchQuery, focusRequest: model.subtitleSearchFocusRequest,
+        onChange: { model.setSubtitleSearchQuery($0) },
+        onNavigate: { model.navigateSubtitleSearch(backwards: $0) },
+        onClose: { model.closeSubtitleSearch() })
+        .frame(width: 260, height: 24)
+      Button { model.navigateSubtitleSearch(backwards: true) } label: { Image(systemName: "chevron.up") }
+        .help("前の検索結果（Shift+Enter）").accessibilityLabel("前の検索結果")
+        .disabled(model.subtitleSearchResults.matches.isEmpty)
+      Button { model.navigateSubtitleSearch() } label: { Image(systemName: "chevron.down") }
+        .help("次の検索結果（Enter）").accessibilityLabel("次の検索結果")
+        .disabled(model.subtitleSearchResults.matches.isEmpty)
+      Button { model.closeSubtitleSearch() } label: { Image(systemName: "xmark") }
+        .help("検索を閉じて再生位置へ戻る（Esc）").accessibilityLabel("字幕検索を閉じる")
+    }
   }
   func follow(_ proxy: ScrollViewProxy) {
     guard !model.draggingDictionarySelection, !model.browsingSubtitleSearch else { return }
