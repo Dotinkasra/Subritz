@@ -93,7 +93,8 @@ struct MainWindowLifecycle: NSViewRepresentable {
       window.delegate = self
       window.title = "Subritz"
       // Native subtitle buttons and the embedded player may hold keyboard focus.
-      // Handle Escape only in this window; sheets and other windows keep their own behavior.
+      // Close Find before clearing a dictionary selection. Sheets and other
+      // windows retain their own Escape handling.
       keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
         guard let self else { return event }
         return self.handleKeyDown(event)
@@ -110,7 +111,12 @@ struct MainWindowLifecycle: NSViewRepresentable {
       guard event.keyCode == 53,
         event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
         let window, event.window === window, window.attachedSheet == nil,
-        let model, model.dictionaryIsPinned else { return event }
+        let model else { return event }
+      if model.subtitleSearchVisible {
+        model.closeSubtitleSearch()
+        return nil
+      }
+      guard model.dictionaryIsPinned else { return event }
       model.releaseDictionaryPin()
       return nil
     }
@@ -158,6 +164,12 @@ struct SubritzCommands: Commands {
       Button(String(localized: "About Subritz")) {
         NSApp.orderFrontStandardAboutPanel(options: AppArtwork.aboutOptions)
       }
+    }
+    CommandGroup(after: .textEditing) {
+      Button(String(localized: "Find in Subtitles")) {
+        openWindow(id: "main")
+        model.openSubtitleSearch()
+      }.keyboardShortcut("f", modifiers: .command).disabled(!model.ready)
     }
     CommandMenu(String(localized: "Library")) {
       Button(String(localized: "Video History")) {

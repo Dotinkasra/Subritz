@@ -43,4 +43,25 @@ import Testing
     #expect(coordinator.handleKeyDown(try key(53, window: main)) != nil)
     #expect(model.pinnedToken?.id == words[1].id)
   }
+  @Test func escapeClosesSearchBeforeUnpinningDictionaryAndKeepsQuery() throws {
+    _ = NSApplication.shared
+    let (model, words) = try DictionaryPinTests().fixture(realtime: false)
+    defer { model.closeVideo() }
+    model.pinDictionary(words[1])
+    model.openSubtitleSearch()
+    model.setSubtitleSearchQuery("study")
+    let main = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+    let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+    let coordinator = MainWindowLifecycle.Coordinator(model: model)
+    coordinator.attach(main)
+    defer { coordinator.detach() }
+    #expect(coordinator.handleKeyDown(try key(53, window: other)) != nil)
+    #expect(coordinator.handleKeyDown(try key(53, window: main, modifiers: .command)) != nil)
+    #expect(model.subtitleSearchVisible)
+    #expect(coordinator.handleKeyDown(try key(53, window: main)) == nil)
+    #expect(!model.subtitleSearchVisible && model.subtitleSearchQuery == "study")
+    #expect(model.subtitleSearchResults.highlights.isEmpty && model.pinnedToken?.id == words[1].id)
+    model.openSubtitleSearch()
+    #expect(model.subtitleSearchQuery == "study" && model.subtitleSearchResults.matches.count == 1)
+  }
 }

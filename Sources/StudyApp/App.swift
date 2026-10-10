@@ -18,6 +18,7 @@ import SwiftUI
 }
 struct MainView: View {
   @ObservedObject var model: StudyModel
+  @State private var videoHidden = false
   @Environment(\.openSettings) private var openSettings
   @Environment(\.openWindow) private var openWindow
   var body: some View {
@@ -57,6 +58,20 @@ struct MainView: View {
         HStack(spacing: 0) {
           VStack(spacing: 8) {
             YouTubePlayer(videoID: document.video.id, bridge: model.bridge).id(model.session)
+              .allowsHitTesting(!videoHidden)
+              .accessibilityHidden(videoHidden)
+              .overlay {
+                if videoHidden {
+                  Rectangle().fill(Color(nsColor: .windowBackgroundColor))
+                    .overlay {
+                      VStack(spacing: 12) {
+                        Image(systemName: "speaker.wave.2").font(.system(size: 32))
+                        Text("映像を非表示にしています").font(.callout)
+                      }.foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+              }
             HStack {
               Button { model.saveBookmark() } label: {
                 if model.savingBookmark { ProgressView().controlSize(.small).frame(width: 16, height: 16) }
@@ -74,6 +89,13 @@ struct MainView: View {
                 value: Binding(get: { model.time }, set: { model.seek($0) }),
                 in: 0...max(1, model.duration))
               Text(timestamp(model.duration)).monospacedDigit().font(.caption)
+              Button {
+                videoHidden.toggle()
+              } label: {
+                Image(systemName: videoHidden ? "eye" : "eye.slash")
+              }
+              .help(videoHidden ? "映像を表示" : "映像を非表示（音声・字幕・シークは継続）")
+              .accessibilityLabel(videoHidden ? "映像を表示" : "映像を非表示")
             }
             HStack {
               Text(document.video.title).lineLimit(2)
@@ -142,6 +164,7 @@ struct MainView: View {
         model.showSettings = false
       }
     }
+    .onChange(of: model.session) { _, _ in videoHidden = false }
     .alert("本当に動画を閉じますか？", isPresented: $model.confirmCloseVideo) {
       Button("キャンセル", role: .cancel) {}
       Button("動画を閉じる", role: .destructive) { model.closeVideo() }
@@ -404,8 +427,34 @@ struct SubtitlePane: View {
         Text(model.grammarEnabledForVideo ? "字幕 / 文法" : "字幕").font(.headline)
         Text("ドラッグで複数語を選択").font(.caption).foregroundStyle(.secondary)
         Spacer()
-        Text(model.playing ? "再生位置に追従" : "過去・未来へスクロールできます")
+        Text(model.browsingSubtitleSearch ? "検索結果を表示中" : model.playing ? "再生位置に追従" : "過去・未来へスクロールできます")
           .font(.caption).foregroundStyle(.secondary)
+        if !model.subtitleSearchVisible {
+          Button { model.openSubtitleSearch() } label: { Image(systemName: "magnifyingglass") }
+            .help("字幕内を検索（⌘F）").accessibilityLabel("字幕内を検索")
+        }
+      }
+      if model.subtitleSearchVisible {
+        HStack(spacing: 8) {
+          SubtitleSearchField(query: model.subtitleSearchQuery, focusRequest: model.subtitleSearchFocusRequest,
+            onChange: { model.setSubtitleSearchQuery($0) },
+            onNavigate: { model.navigateSubtitleSearch(backwards: $0) },
+            onClose: { model.closeSubtitleSearch() })
+            .frame(width: 260, height: 24)
+          Text(model.subtitleSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "字幕全体を検索" : model.subtitleSearchResults.matches.isEmpty
+              ? "一致なし" : "\(model.subtitleSearchSelection + 1) / \(model.subtitleSearchResults.matches.count)")
+            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+          Button { model.navigateSubtitleSearch(backwards: true) } label: { Image(systemName: "chevron.up") }
+            .help("前の検索結果（Shift+Enter）").accessibilityLabel("前の検索結果")
+            .disabled(model.subtitleSearchResults.matches.isEmpty)
+          Button { model.navigateSubtitleSearch() } label: { Image(systemName: "chevron.down") }
+            .help("次の検索結果（Enter）").accessibilityLabel("次の検索結果")
+            .disabled(model.subtitleSearchResults.matches.isEmpty)
+          Spacer()
+          Button { model.closeSubtitleSearch() } label: { Image(systemName: "xmark") }
+            .help("検索を閉じて再生位置へ戻る（Esc）").accessibilityLabel("字幕検索を閉じる")
+        }
       }
       ScrollViewReader { proxy in
         GeometryReader { geometry in
@@ -426,16 +475,25 @@ struct SubtitlePane: View {
           .onChange(of: model.draggingDictionarySelection) { _, dragging in
             if !dragging && model.playing { follow(proxy) }
           }
+          .onChange(of: model.currentSubtitleSearchMatch?.id) { showSearchResult(proxy) }
+          .onChange(of: model.subtitleSearchQuery) { showSearchResult(proxy) }
+          .onChange(of: model.browsingSubtitleSearch) { _, browsing in
+            if browsing { showSearchResult(proxy) } else { follow(proxy) }
+          }
         }
       }
     }.padding(16).background(Color(nsColor: .windowBackgroundColor))
   }
   func follow(_ proxy: ScrollViewProxy) {
-    guard !model.draggingDictionarySelection else { return }
+    guard !model.draggingDictionarySelection, !model.browsingSubtitleSearch else { return }
     let lines = model.subtitleLines
     guard lines.indices.contains(model.currentLineIndex) else { return }
     // Follow on line changes, not on every clock tick: scrolling still works within a line.
     proxy.scrollTo(lines[model.currentLineIndex].id, anchor: .center)
+  }
+  func showSearchResult(_ proxy: ScrollViewProxy) {
+    guard model.subtitleSearchVisible, let match = model.currentSubtitleSearchMatch else { return }
+    proxy.scrollTo(match.lineID, anchor: .center)
   }
 }
 struct SubtitleLineView: View {
@@ -453,7 +511,9 @@ struct SubtitleLineView: View {
               onClick: { model.toggleDictionarySelection(token) }, onDoubleClick: { model.seekToWord(token) },
               selectionID: token.id, selectionScope: model.session,
               onDrag: { endpoint in model.pinDictionaryRange(from: token.id, to: endpoint) },
-              onDragState: { model.draggingDictionarySelection = $0 }
+              onDragState: { model.draggingDictionarySelection = $0 },
+              searchRanges: model.subtitleSearchResults.highlights[token.id] ?? [],
+              activeSearchRanges: model.currentSubtitleSearchMatch?.fragments.filter { $0.tokenID == token.id }.map(\.range) ?? []
             )
             .background(
               model.currentToken?.id == token.id || model.resolvedExpression?.contains(token) == true

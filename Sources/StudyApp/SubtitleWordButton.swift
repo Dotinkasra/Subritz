@@ -14,17 +14,24 @@ struct SubtitleWordButton: NSViewRepresentable {
   var selectionScope: UUID? = nil
   var onDrag: ((UUID) -> Void)? = nil
   var onDragState: ((Bool) -> Void)? = nil
+  var searchRanges: [NSRange] = []
+  var activeSearchRanges: [NSRange] = []
   func makeNSView(context: Context) -> WordButton {
     WordButton(frame: .zero)
   }
   func updateNSView(_ view: WordButton, context: Context) {
     let font = NSFont.systemFont(ofSize: size, weight: current ? .medium : .regular)
-    let attributedTitle = NSAttributedString(
+    let attributedTitle = NSMutableAttributedString(
       string: title,
       attributes: [
         .font: font,
         .foregroundColor: current ? NSColor.labelColor : NSColor.secondaryLabelColor,
       ])
+    for (ranges, color) in [(searchRanges, NSColor.systemYellow), (activeSearchRanges, NSColor.systemOrange)] {
+      for range in ranges where range.location >= 0 && NSMaxRange(range) <= attributedTitle.length {
+        attributedTitle.addAttributes([.backgroundColor: color, .foregroundColor: NSColor.black], range: range)
+      }
+    }
     if !view.attributedTitle.isEqual(to: attributedTitle) {
       view.title = title
       view.font = font

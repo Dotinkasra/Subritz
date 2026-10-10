@@ -18,6 +18,12 @@ import SwiftUI
   @Published var document: StudyDocument?
   @Published var currentSentence: Sentence?
   @Published var currentLineIndex = 0
+  @Published var subtitleSearchVisible = false
+  @Published var subtitleSearchQuery = ""
+  @Published var subtitleSearchResults = SubtitleSearchResults()
+  @Published var subtitleSearchSelection = 0
+  @Published var subtitleSearchFocusRequest = 0
+  var subtitleSearchIndex: SubtitleSearchIndex?
   @Published var currentToken: Token?
   @Published var pinnedToken: Token?
   @Published var hoverToken: Token?
@@ -118,6 +124,7 @@ import SwiftUI
     dictionaryPrefetchTask?.cancel()
     bridge.pause()
     session = UUID()
+    resetSubtitleSearchForVideo()
     let sid = session
     ready = false
     loading = true
@@ -611,6 +618,7 @@ import SwiftUI
     }
   }
   func closeVideo() {
+    resetSubtitleSearchForVideo()
     saveExitTimestamp()
     loadTask?.cancel()
     backgroundTask?.cancel()
