@@ -61,6 +61,39 @@ struct EijiroTests {
     let entry = EijiroText.entry([EijiroText.sense("sampleunit", "【レベル】9、【発音】テスト音")], pos: "Noun")
     #expect(entry.shortGloss == "日本語の語義なし")
   }
+  @Test func wrongTokenizerPartOfSpeechFallsBackToDictionaryMeaningAndLabel() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provider = try EijiroProvider(directory: root)
+    let file = root.appendingPathComponent("authored.txt")
+    try """
+    ■Wardrobeunit {映画} : 自作映画名
+    ■wardrobeunit : 【発音】テスト音
+    ■wardrobeunit {名-1} : 〔自作補足〕自作名義A■・A robot stores a paper coat. 自作例文訳
+    ■wardrobeunit {名-2} : 自作名義B
+    ■wardrobeunit {他動} : 自作動義C
+    """.write(to: file, atomically: true, encoding: .utf8)
+    _ = try await provider.importFile(file)
+    let fallback = try #require(await provider.lookup(token("wardrobeunit", pos: "Adjective")))
+    #expect(fallback.shortGloss == "自作名義A、自作名義B")
+    #expect(fallback.partOfSpeech == "Noun" && fallback.usedPartOfSpeechFallback)
+    #expect(fallback.definition.contains("自作動義C") && fallback.definition.contains("自作例文訳"))
+    #expect(!fallback.shortGloss.contains("テスト音") && !fallback.shortGloss.contains("自作例文訳"))
+    #expect(!fallback.shortGloss.contains("自作映画名") && fallback.definition.contains("自作映画名"))
+    let matching = try #require(await provider.lookup(token("wardrobeunit", pos: "Verb")))
+    #expect(matching.shortGloss == "自作動義C" && matching.partOfSpeech == "Verb")
+    #expect(!matching.usedPartOfSpeechFallback)
+  }
+  @Test(arguments: ["my", "your", "his", "her", "our", "their"])
+  func possessiveDeterminersUsePronounEntriesBeforeOtherUses(word: String) {
+    let senses = [
+      EijiroText.sense(word + " {間投}", "自作間投義A"),
+      EijiroText.sense(word + " {代名}", "自作所有義B"),
+    ]
+    let entry = EijiroText.entry(senses, pos: "Determiner")
+    #expect(entry.shortGloss == "自作所有義B" && entry.partOfSpeech == "Pronoun")
+    #expect(!entry.usedPartOfSpeechFallback)
+  }
   @Test func homographsCompositePartsOfSpeechAndArticles() {
     let senses = [
       EijiroText.sense("testword  {1-他動-10}", "自作動義J"),

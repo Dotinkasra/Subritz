@@ -59,7 +59,9 @@ struct MacDictionaryTests {
     #expect(entry.shortGloss == "自作前置義A、自作前置義B")
     #expect(entry.partOfSpeech == "前置詞" && entry.sections.count == 2)
     #expect(entry.definition.contains("自作動義A"))
-    #expect(MacDictionaryMarkup.combine([a,b], pos: "Noun")?.shortGloss == "この品詞の日本語語義はありません")
+    let fallback = try #require(MacDictionaryMarkup.combine([a,b], pos: "Noun"))
+    #expect(fallback.shortGloss == "自作動義A" && fallback.partOfSpeech == "動詞")
+    #expect(fallback.usedPartOfSpeechFallback && !entry.usedPartOfSpeechFallback)
   }
   @Test func nestedDefinitionsAndLongMeaningsArePreserved() throws {
     let long = String(repeating: "自作長義", count: 16)
@@ -68,6 +70,16 @@ struct MacDictionaryTests {
     <span class="semb"><span d:def="1"><span class="trans">\(long)</span></span></span></span></span>
     """
     #expect(MacDictionaryMarkup.parse(document(body), headword: "sampleunit")?.shortGloss == long)
+  }
+  @Test func possessiveDeterminerChoosesPronounAndMismatchStaysInOneDictionarySection() throws {
+    let xml = document(group("間投詞", ["自作間投義A"]) + group("代名詞", ["自作所有義B", "自作所有義C"]))
+    let parsed = try #require(MacDictionaryMarkup.parse(xml, headword: "sampleunit"))
+    let possessive = try #require(MacDictionaryMarkup.combine([parsed], pos: "Determiner"))
+    #expect(possessive.partOfSpeech == "代名詞" && possessive.shortGloss == "自作所有義B、自作所有義C")
+    #expect(!possessive.usedPartOfSpeechFallback)
+    let mismatch = try #require(MacDictionaryMarkup.combine([parsed], pos: "Adjective"))
+    #expect(mismatch.partOfSpeech == "間投詞" && mismatch.shortGloss == "自作間投義A")
+    #expect(mismatch.usedPartOfSpeechFallback && mismatch.definition.contains("自作所有義B"))
   }
   @Test func phrasesUseExactRecordAnchorInsteadOfParentWordMeanings() throws {
     let body = group("名詞", ["自作親名義"]) + """

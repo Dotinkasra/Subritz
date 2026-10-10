@@ -9,7 +9,9 @@ public struct DictionaryExpression {
     token.id = id
     token.surface = tokens.map(\.surface).joined(separator: " ")
     token.normalized = DictionaryText.normalize(token.surface)
-    token.lemma = tokens.map { $0.lemma ?? $0.surface }.joined(separator: " ")
+    // A phrase's headword comes from a successful dictionary lookup. Joining
+    // token lemmas can erase negation or possession and invent another phrase.
+    token.lemma = nil
     token.partOfSpeech = "複数語表現"
     token.endTime = tokens.last!.endTime
     return token
@@ -54,8 +56,12 @@ public enum DictionaryExpressions {
     var variants = [[String]]()
     for (index, token) in tokens.enumerated() {
       var words = [DictionaryText.normalize(token.surface)]
-      if let lemma = token.lemma { words.append(DictionaryText.normalize(lemma)) }
-      if index == 0 {
+      let canInflect = canInflect(token)
+      if canInflect, let lemma = token.lemma {
+        let normalized = DictionaryText.normalize(lemma)
+        if isPlainWord(normalized) { words.append(normalized) }
+      }
+      if index == 0, canInflect {
         let word = words[0]
         if word.hasSuffix("ies"), word.count > 3 { words.append(String(word.dropLast(3)) + "y") }
         if word.hasSuffix("s"), word.count > 3 { words.append(String(word.dropLast())) }
@@ -76,6 +82,21 @@ public enum DictionaryExpressions {
     combinations += partial
     var seen = Set<String>()
     return combinations.filter { seen.insert(DictionaryText.normalize($0)).inserted }
+  }
+  private static func isPlainWord(_ word: String) -> Bool {
+    !word.isEmpty && word.utf8.allSatisfy { (97...122).contains($0) }
+  }
+  private static func canInflect(_ token: Token) -> Bool {
+    let word = DictionaryText.normalize(token.surface)
+    // Contractions and possessives are whole units here: don't -> do and
+    // robot's -> robot are not meaning-preserving phrase substitutions.
+    // Single-word dictionary lookup can still resolve its own abbreviation
+    // references. Do not use those references to invent compound headwords.
+    guard isPlainWord(word) else { return false }
+    if ["Pronoun", "Determiner", "Preposition", "Conjunction", "Particle"].contains(token.partOfSpeech ?? "") {
+      return false
+    }
+    return !["no", "not", "never", "neither", "nor", "without"].contains(word)
   }
   public static func windows(containing anchor: Token, in tokens: [Token]) -> [[Token]] {
     guard let index = tokens.firstIndex(where: { $0.id == anchor.id }), anchor.lexical else { return [] }

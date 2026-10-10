@@ -156,14 +156,15 @@ enum MacDictionaryMarkup {
     case "Preposition": wanted = ["前置詞"]
     case "Conjunction": wanted = ["接続詞"]
     case "Interjection": wanted = ["間投詞", "感動詞"]
-    case "Determiner": wanted = ["限定詞", "冠詞", "形容詞"]
+    case "Determiner": wanted = ["限定詞", "冠詞", "形容詞", "代名詞"]
     case "Particle": wanted = ["副詞", "前置詞"]
     default: wanted = []
     }
     let matching = wanted.isEmpty ? sections : sections.filter { wanted.contains($0.partOfSpeech) }
-    // Missing POS information may fall back to the first actual dictionary POS. A known
-    // POS mismatch must not silently present another grammatical use as its meaning.
-    let gloss = matching.flatMap(\.senses).prefix(3).map { $0.shortMeaning ?? $0.meaning }
+    let selected = matching.isEmpty ? Array(sections.prefix(1)) : matching
+    // On a tokenizer mismatch, show an actual dictionary use with its own POS.
+    // Keep that fallback separate so a matching lemma can still take priority.
+    let gloss = selected.flatMap(\.senses).prefix(3).map { $0.shortMeaning ?? $0.meaning }
       .joined(separator: "、")
     let definition = sections.map { section in
       section.partOfSpeech + "\n" + section.senses.enumerated().map { index, sense in
@@ -172,8 +173,8 @@ enum MacDictionaryMarkup {
     }.joined(separator: "\n\n")
     return DictionaryEntry(definition: definition,
       shortGloss: gloss.isEmpty ? "この品詞の日本語語義はありません" : gloss,
-      headword: headword, partOfSpeech: matching.first?.partOfSpeech ?? sections.first?.partOfSpeech,
-      sections: sections, pronunciation: pronunciation)
+      headword: headword, partOfSpeech: selected.first?.partOfSpeech,
+      sections: sections, pronunciation: pronunciation, usedPartOfSpeechFallback: matching.isEmpty && !selected.isEmpty)
   }
   static func partOfSpeech(_ group: XMLElement) -> String? {
     group.allElements.first {

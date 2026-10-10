@@ -55,6 +55,56 @@ struct DictionaryExpressionTests {
     let found = await DictionaryExpressions.matches(anchors: [idiom[1]], in: idiom, provider: provider)
     #expect(found[idiom[1].id]?.entry.headword == "look ahead to")
   }
+  @Test func phraseLemmasCannotEraseNegationContractionsOrPossession() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provider = try EijiroProvider(directory: root)
+    let file = root.appendingPathComponent("authored.txt")
+    try """
+    ■I do : 自作肯定義A
+    ■will go : 自作肯定義B
+    ■he be : 自作肯定義C
+    ■robot box : 自作複合義D
+    ■I signal : 自作肯定義E
+    ■there' : 自作別語義F
+    ■there' up : 自作別句義G
+    """.write(to: file, atomically: true, encoding: .utf8)
+    _ = try await provider.importFile(file)
+    for (surface, index, lemma, pos) in [
+      ("I don't", 1, "do", "Verb"), ("I don’t", 1, "do", "Verb"),
+      ("won't go", 0, "will", "Verb"), ("he's ready", 0, "he", "Pronoun"),
+      ("robot's box", 0, "robot", "Noun"), ("my signal", 0, "I", "Determiner"),
+      ("there's up", 0, "there", "Adverb"),
+    ] {
+      var tokens = try words(surface)
+      tokens[index].lemma = lemma
+      tokens[index].partOfSpeech = pos
+      let candidates = DictionaryExpressions.candidates(tokens).map(DictionaryText.normalize)
+      #expect(candidates == [DictionaryText.normalize(surface)])
+      #expect(await provider.lookupExpressions([tokens])[0] == nil)
+      #expect(DictionaryExpression(tokens).token.lemma == nil)
+    }
+    // Reject the affirmative compound in automatic lookup as well as explicit
+    // selection; the ordinary dictionary word can then be displayed instead.
+    var sentence = try words("I don't think the copper robot moves.")
+    sentence[1].lemma = "do"
+    let matches = await DictionaryExpressions.matches(anchors: Array(sentence.prefix(2)), in: sentence, provider: provider)
+    #expect(matches.isEmpty)
+  }
+  @Test func exactContractedPhrasesStillResolveBeforeInflectedCandidates() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provider = try EijiroProvider(directory: root)
+    let file = root.appendingPathComponent("authored.txt")
+    try "■I don't : 自作否定義A\n■I do : 自作肯定義B\n■stacks up : 自作完全一致義C\n■stack up : 自作基本形義D".write(to: file, atomically: true, encoding: .utf8)
+    _ = try await provider.importFile(file)
+    var negative = try words("I don’t")
+    negative[1].lemma = "do"
+    let entry = await provider.lookupExpressions([negative])[0]
+    #expect(entry.map { DictionaryText.normalize($0.headword ?? "") } == "i don't")
+    #expect(entry?.shortGloss == "自作否定義A")
+    #expect(await provider.lookupExpressions([try words("stacks up")])[0]?.shortGloss == "自作完全一致義C")
+  }
   @Test func automaticExpressionsCrossCaptionLinesButNotPunctuationOrPauses() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

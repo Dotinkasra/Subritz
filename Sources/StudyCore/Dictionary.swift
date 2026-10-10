@@ -10,6 +10,7 @@ public struct DictionaryEntry: Sendable {
   public var sections: [DictionarySection] = []
   public var pronunciation: String? = nil
   public var expandedForms: [String] = []
+  public var usedPartOfSpeechFallback = false
 }
 public struct DictionarySection: Sendable {
   public var partOfSpeech: String
@@ -97,7 +98,9 @@ enum EijiroText {
     case "Preposition": return ["前", "前置"]
     case "Conjunction": return ["接", "接続"]
     case "Interjection": return ["間", "間投"]
-    case "Determiner": return ["定", "不", "冠", "形"]
+    // Possessives are often called determiners by the tokenizer and pronouns by
+    // the dictionary. These labels describe the same lookup, not a missing use.
+    case "Determiner": return ["定", "不", "冠", "形", "代", "代名"]
     case "Particle": return ["前", "副", "助"]
     default: return []
     }
@@ -159,16 +162,45 @@ enum EijiroText {
     }.map(\.element)
   }
   static func meanings(_ senses: [Sense], pos: String?) -> [Sense] {
+    selectedMeanings(senses, pos: pos).senses
+  }
+  static func selectedMeanings(_ senses: [Sense], pos: String?) -> (senses: [Sense], fallback: Bool) {
     let ordered = ordered(senses)
     let tagged = ordered.filter { $0.label != nil }
-    return (tagged.isEmpty ? ordered : tagged.filter { matches($0, pos: pos) })
-      .filter {
+    let definitions = (tagged.isEmpty ? ordered : tagged).filter {
         meaning($0.definition).range(of: "[ぁ-んァ-ン一-龯]", options: .regularExpression) != nil
           || reference($0.definition) != nil
       }
+    // Labels such as movie titles and country domains are separate entries, not
+    // grammatical uses. Prefer lexical senses over those names when present.
+    let lexical = definitions.filter {
+      $0.label?.components(separatedBy: "・").contains { partOfSpeechNames[$0] != nil } == true
+    }
+    let available = lexical.isEmpty ? definitions : lexical
+    let matching = available.filter { matches($0, pos: pos) }
+    if !matching.isEmpty { return (matching, false) }
+    guard let first = available.first else { return ([], false) }
+    // The tokenizer's POS is only a hint. Use one actual dictionary group if it
+    // disagrees, keeping the badge and short meanings from the same use.
+    return (available.filter { $0.group == first.group && $0.label == first.label }, true)
+  }
+  static let partOfSpeechNames: [String: String] = [
+    "名": "Noun", "動": "Verb", "他動": "Verb", "自動": "Verb", "自他動": "Verb", "他": "Verb", "自": "Verb",
+    "助動": "助動詞", "句動": "句動詞", "句他動": "句動詞", "句自動": "句動詞",
+    "形": "Adjective", "副": "Adverb", "代": "Pronoun", "代名": "Pronoun", "前": "Preposition", "前置": "Preposition",
+    "接": "Conjunction", "接続": "Conjunction", "間": "間投詞", "間投": "間投詞",
+    "定": "Determiner", "不": "Determiner", "冠": "Determiner", "省略形": "省略形",
+  ]
+  static func partOfSpeech(_ sense: Sense, preferred: String?) -> String? {
+    guard let label = sense.label else { return nil }
+    let components = label.components(separatedBy: "・")
+    let wanted = labels(for: preferred)
+    let selected = components.first { wanted.contains($0) } ?? components[0]
+    return partOfSpeechNames[selected] ?? label
   }
   static func entry(_ senses: [Sense], pos: String?) -> DictionaryEntry {
-    let gloss = meanings(senses, pos: pos).filter { reference($0.definition) == nil }
+    let selection = selectedMeanings(senses, pos: pos)
+    let gloss = selection.senses.filter { reference($0.definition) == nil }
       .prefix(3).map { meaning($0.definition) }.joined(separator: "、")
     let detailed = ordered(senses).map { sense in
       let label = sense.tag.map { "{\($0)}: " } ?? ""
@@ -176,17 +208,23 @@ enum EijiroText {
         + sense.definition.replacingOccurrences(of: "■", with: "\n■")
         .replacingOccurrences(of: "◆", with: "\n◆")
     }.joined(separator: "\n")
-    return DictionaryEntry(definition: detailed, shortGloss: gloss.isEmpty ? "日本語の語義なし" : gloss)
+    return DictionaryEntry(definition: detailed, shortGloss: gloss.isEmpty ? "日本語の語義なし" : gloss,
+      partOfSpeech: selection.senses.first.flatMap { partOfSpeech($0, preferred: pos) },
+      usedPartOfSpeechFallback: selection.fallback)
   }
 }
 public struct MacDictionaryProvider: DictionaryProvider {
   public init() {}
   public func lookup(_ token: Token) async -> DictionaryEntry? {
     await Task.detached {
+      var fallback: DictionaryEntry?
       for word in DictionaryText.candidates(token) {
-        if let entry = MacDictionaryAccess.entry(for: word, pos: token.partOfSpeech) { return entry }
+        if let entry = MacDictionaryAccess.entry(for: word, pos: token.partOfSpeech) {
+          if !entry.usedPartOfSpeechFallback { return entry }
+          if fallback == nil { fallback = entry }
+        }
       }
-      return nil
+      return fallback
     }.value
   }
   public func lookupExpressions(_ expressions: [[Token]]) async -> [DictionaryEntry?] {
@@ -340,7 +378,9 @@ public actor EijiroProvider: DictionaryProvider {
     {
       return DictionaryEntry(
         definition: direct.definition + "\n\n参照先: " + reference + "\n" + resolved.definition,
-        shortGloss: resolved.shortGloss, headword: reference, partOfSpeech: direct.partOfSpeech)
+        shortGloss: resolved.shortGloss, headword: reference,
+        partOfSpeech: direct.partOfSpeech ?? resolved.partOfSpeech,
+        usedPartOfSpeechFallback: direct.usedPartOfSpeechFallback || resolved.usedPartOfSpeechFallback)
     }
     return direct
   }
@@ -348,8 +388,10 @@ public actor EijiroProvider: DictionaryProvider {
     var fallback: DictionaryEntry?
     for word in DictionaryText.candidates(token) {
       if let entry = resolve(word, pos: token.partOfSpeech, visited: []) {
-        if entry.shortGloss != "日本語の語義なし" { return entry }
-        if fallback == nil { fallback = entry }
+        if entry.shortGloss != "日本語の語義なし", !entry.usedPartOfSpeechFallback { return entry }
+        if fallback == nil || (fallback?.shortGloss == "日本語の語義なし" && entry.shortGloss != "日本語の語義なし") {
+          fallback = entry
+        }
       }
     }
     return fallback
