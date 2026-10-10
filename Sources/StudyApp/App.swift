@@ -23,14 +23,12 @@ struct MainView: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Image(systemName: "play.rectangle.fill").foregroundStyle(.red)
-        Text("Subritz").font(.headline)
-        Spacer()
         if model.hasOpenVideo {
+          Button("閉じる", systemImage: "xmark") { model.confirmCloseVideo = true }
+          Spacer()
           Text(model.grammarEnabledForVideo ? "AI文法解析 ON" : "AI文法解析 OFF")
             .font(.caption).foregroundStyle(.secondary)
           if model.ready { AdvancedModeToggle(model: model) }
-          Button("動画を閉じる", systemImage: "xmark") { model.confirmCloseVideo = true }
         } else {
           TextField("https://www.youtube.com/watch?v=…", text: $model.url)
             .textFieldStyle(.roundedBorder).frame(maxWidth: 520).onSubmit { model.load() }
@@ -38,6 +36,7 @@ struct MainView: View {
           Button("読み込む") { model.load() }.keyboardShortcut(.return, modifiers: .command)
             .disabled(model.isChangingCacheDirectory)
           GrammarLoadOption(model: model)
+          Spacer()
         }
         Button("動画履歴", systemImage: "clock") {
           model.librarySection = .history

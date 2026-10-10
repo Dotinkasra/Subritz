@@ -4,6 +4,9 @@ import SwiftUI
 @MainActor final class AppLifecycle: NSObject, NSApplicationDelegate {
   weak var model: StudyModel?
   private var terminating = false
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    if let icon = AppArtwork.icon { NSApp.applicationIconImage = icon }
+  }
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     if terminating { return .terminateLater }
     guard let model else { return .terminateNow }
@@ -27,6 +30,20 @@ import SwiftUI
       sender.reply(toApplicationShouldTerminate: shouldQuit)
     }
     return .terminateLater
+  }
+}
+
+@MainActor enum AppArtwork {
+  // Read the bundled artwork directly. NSApplicationIcon may still contain the
+  // generic icon cached when this development bundle was first registered.
+  static let icon: NSImage? = {
+    guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns") else { return nil }
+    return NSImage(contentsOf: url)
+  }()
+  static var aboutOptions: [NSApplication.AboutPanelOptionKey: Any] {
+    var options: [NSApplication.AboutPanelOptionKey: Any] = [.applicationName: "Subritz"]
+    if let icon { options[.applicationIcon] = icon }
+    return options
   }
 }
 
@@ -139,7 +156,7 @@ struct SubritzCommands: Commands {
     CommandGroup(replacing: .help) {}
     CommandGroup(replacing: .appInfo) {
       Button(String(localized: "About Subritz")) {
-        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Subritz"])
+        NSApp.orderFrontStandardAboutPanel(options: AppArtwork.aboutOptions)
       }
     }
     CommandMenu(String(localized: "Library")) {
