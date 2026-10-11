@@ -17,14 +17,24 @@ if [[ ! -f "$ICON_OUTPUT" || "$ICON_SOURCE" -nt "$ICON_OUTPUT" || "$PWD/scripts/
 fi
 swift build --disable-sandbox --build-system native "${SDK_ARGS[@]}" "$@"
 BIN_DIR=$(swift build --disable-sandbox --build-system native "${SDK_ARGS[@]}" "$@" --show-bin-path)
-APP="$PWD/dist/Subritz.app"
-if [[ -d "$PWD/dist/YouTubeEnglishStudy.app" && ! -d "$APP" ]]; then
+APP="${SUBRITZ_APP_PATH:-$PWD/dist/Subritz.app}"
+if [[ "$APP" == "$PWD/dist/Subritz.app" && -d "$PWD/dist/YouTubeEnglishStudy.app" && ! -d "$APP" ]]; then
  mv "$PWD/dist/YouTubeEnglishStudy.app" "$APP"
 fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Subritz" "$APP/Contents/MacOS/Subritz"
 rm -f "$APP/Contents/MacOS/YouTubeEnglishStudy"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
+if [[ -n "${SUBRITZ_BUNDLE_ID:-}" ]]; then
+ /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $SUBRITZ_BUNDLE_ID" "$APP/Contents/Info.plist"
+fi
+if [[ -n "${SUBRITZ_DISPLAY_NAME:-}" ]]; then
+ /usr/libexec/PlistBuddy -c "Set :CFBundleName $SUBRITZ_DISPLAY_NAME" "$APP/Contents/Info.plist"
+ /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $SUBRITZ_DISPLAY_NAME" "$APP/Contents/Info.plist"
+fi
+if [[ -n "${SUBRITZ_SETTINGS_SOURCE_DOMAIN:-}" ]]; then
+ /usr/libexec/PlistBuddy -c "Add :SubritzSettingsSourceDomain string $SUBRITZ_SETTINGS_SOURCE_DOMAIN" "$APP/Contents/Info.plist"
+fi
 cp -R scripts/Resources/. "$APP/Contents/Resources/"
 codesign --force --sign - "$APP"
 touch "$APP"

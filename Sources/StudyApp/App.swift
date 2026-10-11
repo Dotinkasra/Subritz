@@ -2,15 +2,16 @@ import StudyCore
 import SwiftUI
 
 @main struct StudyApp: App {
-  @StateObject private var model = StudyModel()
+  @StateObject private var model = StudyModel(defaults: ApplicationPreferences.defaults())
   @NSApplicationDelegateAdaptor(AppLifecycle.self) private var lifecycle
+  private var appName: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Subritz" }
   var body: some Scene {
-    Window("Subritz", id: "main") {
+    Window(appName, id: "main") {
       MainView(model: model).frame(minWidth: 1100, minHeight: 700)
         .background(MainWindowLifecycle(model: model).frame(width: 0, height: 0))
         .onAppear { lifecycle.model = model }
     }.commands { SubritzCommands(model: model) }
-    Window("Subritz — ライブラリ", id: "library") {
+    Window(appName + " — ライブラリ", id: "library") {
       LibraryView(model: model).frame(minWidth: 760, minHeight: 500)
     }.defaultSize(width: 900, height: 620)
     Settings { SettingsView(model: model) }
@@ -90,7 +91,7 @@ struct MainView: View {
         Spacer()
         VStack(spacing: 18) {
           Image(systemName: "captions.bubble").font(.system(size: 48)).foregroundStyle(.secondary)
-          Text("英語を、動画と一緒に読み解く").font(.title2)
+          Text("好きな動画で英語学習").font(.title2)
           Text(
             "英語の自動字幕がある YouTube 動画を読み込みます。\n字幕の単語にマウスを置くと詳細辞書を表示し、クリックすると固定し、ダブルクリックするとその発話位置へ移動します。"
           )
@@ -240,7 +241,7 @@ struct DictionaryPane: View {
                   let meanings = realtimeMeanings(entry.shortGloss)
                   VStack(spacing: 12) {
                     Text(meanings.first ?? entry.shortGloss).font(
-                      .system(size: min(48, geometry.size.width / 8), weight: .semibold)
+                      .system(size: min(44, geometry.size.width / 8.5), weight: .semibold)
                     )
                     .multilineTextAlignment(.center).lineSpacing(8)
                     .fixedSize(horizontal: false, vertical: true)
@@ -451,8 +452,8 @@ struct SubtitlePane: View {
             LazyVStack(alignment: .leading, spacing: 8) {
               ForEach(model.subtitleLines) { line in
                 SubtitleLineView(
-                  model: model, line: line, current: line.index == model.currentLineIndex
-                )
+                  model: model, line: line, presentation: SubtitleLinePresentation(model: model, line: line)
+                ).equatable()
                 .frame(minHeight: max(60, (geometry.size.height - 16) / 3), alignment: .center)
                 .id(line.id)
               }
@@ -506,10 +507,14 @@ struct SubtitlePane: View {
     proxy.scrollTo(match.lineID, anchor: .center)
   }
 }
-struct SubtitleLineView: View {
-  @ObservedObject var model: StudyModel
+struct SubtitleLineView: View, Equatable {
+  let model: StudyModel
   let line: CaptionLine
-  let current: Bool
+  let presentation: SubtitleLinePresentation
+  var current: Bool { presentation.current }
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.model === rhs.model && lhs.line == rhs.line && lhs.presentation == rhs.presentation
+  }
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       FlowLayout(spacing: 5) {
@@ -519,23 +524,23 @@ struct SubtitleLineView: View {
               title: token.surface, size: current ? 26 : 21, current: current,
               enabled: token.lexical,
               onClick: { model.toggleDictionarySelection(token) }, onDoubleClick: { model.seekToWord(token) },
-              selectionID: token.id, selectionScope: model.session,
+              selectionID: token.id, selectionScope: presentation.session,
               onDrag: { endpoint in model.pinDictionaryRange(from: token.id, to: endpoint) },
               onDragState: { model.draggingDictionarySelection = $0 },
-              searchRanges: model.subtitleSearchResults.highlights[token.id] ?? [],
-              activeSearchRanges: model.currentSubtitleSearchMatch?.fragments.filter { $0.tokenID == token.id }.map(\.range) ?? []
+              searchRanges: presentation.searchRanges[token.id] ?? [],
+              activeSearchRanges: presentation.activeSearchRanges[token.id] ?? []
             )
             .background(
-              model.currentToken?.id == token.id || model.resolvedExpression?.contains(token) == true
+              presentation.emphasized.contains(token.id)
                 ? Color.accentColor.opacity(0.24) : .clear,
               in: RoundedRectangle(cornerRadius: 4)
             )
             .overlay {
               RoundedRectangle(cornerRadius: 4)
-                .stroke(model.dictionarySelectionContains(token) ? Color.orange : .clear, lineWidth: 1.5)
+                .stroke(presentation.selected.contains(token.id) ? Color.orange : .clear, lineWidth: 1.5)
                 .allowsHitTesting(false)
             }
-            if model.grammarEnabledForVideo, abs(line.index - model.currentLineIndex) <= 1 {
+            if presentation.grammarEnabled {
               ForEach(Array(spans(token).enumerated()), id: \.offset) { _, span in
                 VStack(spacing: 2) {
                   Underline(role: span.role).frame(height: 5)
@@ -552,7 +557,7 @@ struct SubtitleLineView: View {
           }
         }
       }
-      if model.grammarEnabledForVideo, current, let sentence = model.currentSentence {
+      if presentation.grammarEnabled, current, let sentence = presentation.currentSentence {
         if let analysis = sentence.grammarAnalysis, let clauses = analysis.clauses {
           let complete = clauses.filter { $0.status == .COMPLETE && $0.parentID == nil }
           let patterns = Array(Set(complete.map { $0.pattern.rawValue })).sorted()
@@ -602,9 +607,7 @@ struct SubtitleLineView: View {
       .foregroundStyle(current ? .primary : .secondary)
   }
   func spans(_ token: Token) -> [Span] {
-    guard model.grammarEnabledForVideo,
-      let sentence = model.document?.sentences.first(where: { $0.id == token.sentenceID }),
-      let analysis = sentence.grammarAnalysis
+    guard presentation.grammarEnabled, let analysis = presentation.analyses[token.sentenceID]
     else { return [] }
     return analysis.displaySpans(at: token.index)
   }

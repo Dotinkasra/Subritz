@@ -211,7 +211,7 @@ public struct CaptionPipeline {
     }
   }
 }
-public struct CaptionLine: Identifiable {
+public struct CaptionLine: Identifiable, Equatable {
   public var id: UUID
   public var index: Int
   public var tokens: [Token]
