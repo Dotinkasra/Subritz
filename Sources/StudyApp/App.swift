@@ -63,14 +63,20 @@ struct MainView: View {
               .accessibilityHidden(videoHidden)
               .overlay {
                 if videoHidden {
-                  Rectangle().fill(Color(nsColor: .windowBackgroundColor))
-                    .overlay {
-                      VStack(spacing: 12) {
-                        Image(systemName: "speaker.wave.2").font(.system(size: 32))
-                        Text("映像を非表示にしています").font(.callout)
-                      }.foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .combine)
+                  Button {
+                    model.playing ? model.bridge.pause() : model.bridge.play()
+                  } label: {
+                    Rectangle().fill(Color(nsColor: .windowBackgroundColor))
+                      .overlay {
+                        VStack(spacing: 12) {
+                          Image(systemName: "speaker.wave.2").font(.system(size: 32))
+                          Text("映像を非表示にしています").font(.callout)
+                        }.foregroundStyle(.secondary)
+                      }
+                  }.buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                    .help(model.playing ? "クリックして一時停止" : "クリックして再生")
+                    .accessibilityLabel(model.playing ? "映像非表示中：一時停止" : "映像非表示中：再生")
                 }
               }
             HStack {
@@ -114,7 +120,7 @@ struct MainView: View {
         Spacer()
         VStack(spacing: 18) {
           Image(systemName: "captions.bubble").font(.system(size: 48)).foregroundStyle(.secondary)
-          Text("英語を、動画と一緒に読み解く").font(.title2)
+          Text("好きな動画で英語学習").font(.title2)
           Text(
             "英語の自動字幕がある YouTube 動画を読み込みます。\n字幕の単語にマウスを置くと詳細辞書を表示し、クリックすると固定し、ダブルクリックするとその発話位置へ移動します。"
           )
@@ -267,7 +273,7 @@ struct DictionaryPane: View {
                   let meanings = realtimeMeanings(entry.shortGloss)
                   VStack(spacing: 12) {
                     Text(meanings.first ?? entry.shortGloss).font(
-                      .system(size: min(48, geometry.size.width / 8), weight: .semibold)
+                      .system(size: min(44, geometry.size.width / 8.5), weight: .semibold)
                     )
                     .multilineTextAlignment(.center).lineSpacing(8)
                     .fixedSize(horizontal: false, vertical: true)

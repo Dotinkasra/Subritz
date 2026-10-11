@@ -17,8 +17,8 @@ if [[ ! -f "$ICON_OUTPUT" || "$ICON_SOURCE" -nt "$ICON_OUTPUT" || "$PWD/scripts/
 fi
 swift build --disable-sandbox --build-system native "${SDK_ARGS[@]}" "$@"
 BIN_DIR=$(swift build --disable-sandbox --build-system native "${SDK_ARGS[@]}" "$@" --show-bin-path)
-APP="$PWD/dist/Subritz.app"
-if [[ -d "$PWD/dist/YouTubeEnglishStudy.app" && ! -d "$APP" ]]; then
+APP="${SUBRITZ_APP_PATH:-$PWD/dist/Subritz.app}"
+if [[ "$APP" == "$PWD/dist/Subritz.app" && -d "$PWD/dist/YouTubeEnglishStudy.app" && ! -d "$APP" ]]; then
  mv "$PWD/dist/YouTubeEnglishStudy.app" "$APP"
 fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
