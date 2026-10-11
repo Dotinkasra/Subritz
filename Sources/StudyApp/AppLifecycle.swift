@@ -91,7 +91,7 @@ struct MainWindowLifecycle: NSViewRepresentable {
       self.window = window
       originalDelegate = window.delegate
       window.delegate = self
-      window.title = "Subritz"
+      window.title = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Subritz"
       // Native subtitle buttons and the embedded player may hold keyboard focus.
       // Close Find before clearing a dictionary selection. Sheets and other
       // windows retain their own Escape handling.

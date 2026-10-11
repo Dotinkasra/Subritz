@@ -25,6 +25,16 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Subritz" "$APP/Contents/MacOS/Subritz"
 rm -f "$APP/Contents/MacOS/YouTubeEnglishStudy"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
+if [[ -n "${SUBRITZ_BUNDLE_ID:-}" ]]; then
+ /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $SUBRITZ_BUNDLE_ID" "$APP/Contents/Info.plist"
+fi
+if [[ -n "${SUBRITZ_DISPLAY_NAME:-}" ]]; then
+ /usr/libexec/PlistBuddy -c "Set :CFBundleName $SUBRITZ_DISPLAY_NAME" "$APP/Contents/Info.plist"
+ /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $SUBRITZ_DISPLAY_NAME" "$APP/Contents/Info.plist"
+fi
+if [[ -n "${SUBRITZ_SETTINGS_SOURCE_DOMAIN:-}" ]]; then
+ /usr/libexec/PlistBuddy -c "Add :SubritzSettingsSourceDomain string $SUBRITZ_SETTINGS_SOURCE_DOMAIN" "$APP/Contents/Info.plist"
+fi
 cp -R scripts/Resources/. "$APP/Contents/Resources/"
 codesign --force --sign - "$APP"
 touch "$APP"

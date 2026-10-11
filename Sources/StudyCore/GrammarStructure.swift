@@ -8,7 +8,7 @@ public struct GrammarAtom: Codable {
   public var sourceToken: Int
   public var function: String?
 }
-public struct GrammarConstituent: Codable {
+public struct GrammarConstituent: Codable, Equatable {
   public var role: Role
   public var startAtom: Int
   public var endAtomExclusive: Int
@@ -18,7 +18,7 @@ public struct GrammarConstituent: Codable {
 }
 public enum ClauseStatus: String, Codable { case COMPLETE, FRAGMENT, RESTART }
 public enum ClauseKind: String, Codable { case FINITE, NONFINITE, ELLIPTIC }
-public struct GrammarClause: Codable {
+public struct GrammarClause: Codable, Equatable {
   public var id: String
   public var parentID: String?
   public var startAtom: Int

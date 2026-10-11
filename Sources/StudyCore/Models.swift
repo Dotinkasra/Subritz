@@ -8,7 +8,7 @@ public enum Role: String, Codable, CaseIterable {
     MODIFIER, CONJUNCTION, CLAUSE
 }
 public enum RoleConfidence: String, Codable { case HIGH, MEDIUM, LOW }
-public struct Span: Codable {
+public struct Span: Codable, Equatable {
   public var role: Role
   public var startToken: Int
   public var endTokenExclusive: Int
@@ -17,14 +17,14 @@ public struct Span: Codable {
   public var depth: Int? = nil
   public var evidence: String? = nil
 }
-public struct Analysis: Codable {
+public struct Analysis: Codable, Equatable {
   public var sentenceId: UUID
   public var pattern: Pattern
   public var spans: [Span]
   public var clauses: [GrammarClause]? = nil
   public var unresolvedReasons: [String]? = nil
 }
-public struct Token: Codable, Identifiable {
+public struct Token: Codable, Identifiable, Equatable {
   public var id = UUID()
   public var sentenceID = UUID()
   public var index: Int
@@ -39,7 +39,7 @@ public struct Token: Codable, Identifiable {
   public var captionLineIndex: Int? = nil
   public var grammarRole: Role? = nil
 }
-public struct Sentence: Codable, Identifiable {
+public struct Sentence: Codable, Identifiable, Equatable {
   public var id: UUID
   public var videoID: String
   public var index: Int
