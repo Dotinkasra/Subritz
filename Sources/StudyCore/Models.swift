@@ -126,6 +126,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
   public var ytDlpPath = ""
   public var codexPath = ""
   public var dictionary = "macOS"
+  public var dictionaryBrowser = "system"
   public var provider = "local"
   public var baseURL = "http://localhost:1234/v1"
   public var localModel = ""
@@ -158,7 +159,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
   enum CodingKeys: String, CodingKey {
     case ytDlpPath, codexPath, dictionary, provider, baseURL, localModel, codexModel,
       cacheDirectory, timeout, cacheMB, localConcurrency, codexConcurrency, aiGrammarEnabled,
-      advancedMode
+      advancedMode, dictionaryBrowser
   }
   enum LegacyKeys: String, CodingKey { case model }
   public init(from decoder: Decoder) throws {
@@ -167,6 +168,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
     ytDlpPath = try c.decodeIfPresent(String.self, forKey: .ytDlpPath) ?? ytDlpPath
     codexPath = try c.decodeIfPresent(String.self, forKey: .codexPath) ?? codexPath
     dictionary = try c.decodeIfPresent(String.self, forKey: .dictionary) ?? dictionary
+    dictionaryBrowser = try c.decodeIfPresent(String.self, forKey: .dictionaryBrowser) ?? dictionaryBrowser
     provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? provider
     baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? baseURL
     localModel = try c.decodeIfPresent(String.self, forKey: .localModel) ?? localModel

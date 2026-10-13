@@ -18,6 +18,8 @@ import SwiftUI
   @Published var document: StudyDocument?
   @Published var currentSentence: Sentence?
   @Published var currentLineIndex = 0
+  @Published var subtitleScrollPinned = false
+  @Published var subtitlePinnedLineID: UUID?
   @Published var subtitleSearchVisible = false
   @Published var subtitleSearchQuery = ""
   @Published var subtitleSearchResults = SubtitleSearchResults()
@@ -132,6 +134,8 @@ import SwiftUI
     bridge.pause()
     session = UUID()
     resetSubtitleSearchForVideo()
+    subtitleScrollPinned = false
+    subtitlePinnedLineID = nil
     let sid = session
     ready = false
     loading = true
@@ -626,6 +630,8 @@ import SwiftUI
   }
   func closeVideo() {
     resetSubtitleSearchForVideo()
+    subtitleScrollPinned = false
+    subtitlePinnedLineID = nil
     saveExitTimestamp()
     loadTask?.cancel()
     backgroundTask?.cancel()

@@ -58,6 +58,12 @@ struct LibraryView: View {
       HStack {
         Text(countDescription)
         Spacer()
+        if model.librarySection == .favorites {
+          Button("エクスポート", systemImage: "square.and.arrow.up") {
+            openWindow(id: "favorite-export")
+          }.help("お気に入りの単語をテキストまたはCSVで書き出す")
+            .disabled(model.libraryLoading || model.favoriteWords.isEmpty)
+        }
       }.font(.caption).foregroundStyle(.secondary).padding(12)
       if let error = model.libraryError {
         Text(error).font(.callout).foregroundStyle(.red).padding(12)
@@ -138,8 +144,8 @@ struct LibraryView: View {
           List(favorites, selection: selection) { word in
             VStack(alignment: .leading, spacing: 5) {
               Text(word.surface).font(.headline)
-              Text(word.shortGloss.isEmpty ? "語義は未登録です" : word.shortGloss)
-                .font(.callout).foregroundStyle(.secondary).lineLimit(2)
+              RoundedRectangle(cornerRadius: 3).fill(Color.gray.opacity(0.45))
+                .frame(width: 120, height: 12).accessibilityLabel("日本語の意味は非表示")
             }.padding(.vertical, 5).tag(word.id)
               .contextMenu {
                 Button("お気に入りを解除", role: .destructive) { model.removeFavorite(word.id) }
@@ -168,7 +174,7 @@ struct LibraryView: View {
   @ViewBuilder var detail: some View {
     switch model.librarySection {
     case .favorites:
-      if let word = selectedFavorite { FavoriteDefinitionView(model: model, word: word, open: open) }
+      if let word = selectedFavorite { FavoriteDefinitionView(model: model, word: word, open: open).id(word.id) }
       else { ContentUnavailableView("単語を選んでください", systemImage: "book.closed") }
     case .history:
       if let item = selectedHistory {
@@ -270,6 +276,7 @@ struct FavoriteDefinitionView: View {
   @ObservedObject var model: StudyModel
   let word: FavoriteWord
   let open: (VideoTimestamp) -> Void
+  @State private var meaningVisible = false
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
@@ -283,7 +290,17 @@ struct FavoriteDefinitionView: View {
         if let partOfSpeech = word.partOfSpeech {
           Text(DictionaryPane(model: model).pos(partOfSpeech)).foregroundStyle(.secondary)
         }
-        Text(word.shortGloss.isEmpty ? "語義は未登録です" : word.shortGloss).font(.title2).textSelection(.enabled)
+        HStack {
+          CambridgeLookupButton(word: word.surface, browser: model.settings.dictionaryBrowser)
+          Spacer()
+          Button(meaningVisible ? "日本語を隠す" : "日本語を表示",
+            systemImage: meaningVisible ? "eye.slash" : "eye") { meaningVisible.toggle() }
+            .help("日本語の意味・詳細定義の表示を切り替える")
+        }
+        MaskedDictionaryContent(revealed: meaningVisible, onReveal: { meaningVisible = true }) {
+          Text(word.shortGloss.isEmpty ? "語義は未登録です" : word.shortGloss)
+            .font(.title2).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        }
         if let timestamp = model.occurrence(of: word) {
           Divider()
           Text("出現箇所").font(.headline)
@@ -294,12 +311,41 @@ struct FavoriteDefinitionView: View {
         }
         if !word.definition.isEmpty {
           Divider()
-          ForEach(Array(DictionaryText.paragraphs(word.definition).enumerated()), id: \.offset) { _, paragraph in
-            Text(paragraph).font(.body).lineSpacing(5).textSelection(.enabled)
+          MaskedDictionaryContent(revealed: meaningVisible, onReveal: { meaningVisible = true }) {
+            VStack(alignment: .leading, spacing: 20) {
+              ForEach(Array(DictionaryText.paragraphs(word.definition).enumerated()), id: \.offset) { _, paragraph in
+                Text(paragraph).font(.body).lineSpacing(5).textSelection(.enabled)
+              }
+            }.frame(maxWidth: .infinity, alignment: .leading)
           }
         }
         Text("登録時の辞書表示を保存しています").font(.caption).foregroundStyle(.secondary)
       }.frame(maxWidth: .infinity, alignment: .leading).padding(24)
+    }
+  }
+}
+
+struct MaskedDictionaryContent<Content: View>: View {
+  let revealed: Bool
+  let onReveal: () -> Void
+  @ViewBuilder let content: () -> Content
+  var body: some View {
+    Group {
+      if revealed { content() }
+      else { content().hidden().allowsHitTesting(false).accessibilityHidden(true) }
+    }.overlay {
+      if !revealed {
+        ZStack {
+          // Hidden text also prevents copying/accessibility and pressed-state effects from exposing it.
+          RoundedRectangle(cornerRadius: 6).fill(Color(red: 0.30, green: 0.31, blue: 0.33))
+            .allowsHitTesting(false)
+          Button(action: onReveal) {
+            Label("クリックして日本語を表示", systemImage: "eye.slash")
+              .font(.caption).foregroundStyle(.white.opacity(0.9))
+              .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
+          }.buttonStyle(.plain).accessibilityLabel("日本語の意味を表示")
+        }
+      }
     }
   }
 }

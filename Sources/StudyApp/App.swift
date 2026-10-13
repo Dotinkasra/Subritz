@@ -14,6 +14,9 @@ import SwiftUI
     Window(appName + " — ライブラリ", id: "library") {
       LibraryView(model: model).frame(minWidth: 760, minHeight: 500)
     }.defaultSize(width: 900, height: 620)
+    Window("お気に入りをエクスポート", id: "favorite-export") {
+      FavoriteExportView(model: model)
+    }.windowResizability(.contentSize)
     Settings { SettingsView(model: model) }
   }
 }
@@ -31,7 +34,7 @@ struct MainView: View {
           Spacer()
           Text(model.grammarEnabledForVideo ? "AI文法解析 ON" : "AI文法解析 OFF")
             .font(.caption).foregroundStyle(.secondary)
-          if model.ready { AdvancedModeToggle(model: model) }
+          if model.ready { ImmersionModeToggle(model: model) }
         } else {
           TextField("https://www.youtube.com/watch?v=…", text: $model.url)
             .textFieldStyle(.roundedBorder).frame(maxWidth: 520).onSubmit { model.load() }
@@ -64,20 +67,23 @@ struct MainView: View {
               .accessibilityHidden(videoHidden)
               .overlay {
                 if videoHidden {
-                  Button {
-                    model.playing ? model.bridge.pause() : model.bridge.play()
-                  } label: {
+                  ZStack {
+                    // Keep the opaque mask outside the button's pressed-state effects.
                     Rectangle().fill(Color(nsColor: .windowBackgroundColor))
-                      .overlay {
-                        VStack(spacing: 12) {
-                          Image(systemName: "speaker.wave.2").font(.system(size: 32))
-                          Text("映像を非表示にしています").font(.callout)
-                        }.foregroundStyle(.secondary)
-                      }
-                  }.buttonStyle(.plain)
-                    .contentShape(Rectangle())
-                    .help(model.playing ? "クリックして一時停止" : "クリックして再生")
-                    .accessibilityLabel(model.playing ? "映像非表示中：一時停止" : "映像非表示中：再生")
+                      .allowsHitTesting(false)
+                    Button {
+                      model.playing ? model.bridge.pause() : model.bridge.play()
+                    } label: {
+                      VStack(spacing: 12) {
+                        Image(systemName: "speaker.wave.2").font(.system(size: 32))
+                        Text("映像を非表示にしています").font(.callout)
+                      }.foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                    }.buttonStyle(.plain)
+                      .help(model.playing ? "クリックして一時停止" : "クリックして再生")
+                      .accessibilityLabel(model.playing ? "映像非表示中：一時停止" : "映像非表示中：再生")
+                  }
                 }
               }
             PlaybackControls(model: model, position: model.playbackPosition, videoHidden: $videoHidden)
@@ -168,14 +174,14 @@ struct GrammarLoadOption: View {
     .help("OFFの場合、AIへ字幕を送らず、文法の下線・ラベルを表示しません。動画・字幕・辞書は使えます。")
   }
 }
-struct AdvancedModeToggle: View {
+struct ImmersionModeToggle: View {
   @ObservedObject var model: StudyModel
   var body: some View {
-    Toggle("上級者モード", isOn: Binding(
+    Toggle("イマージョンモード", isOn: Binding(
       get: { model.settings.advancedMode }, set: { model.setAdvancedMode($0) }
     ))
     .toggleStyle(.switch).fixedSize()
-    .help("リアルタイム辞書の日本語解説を隠し、英単語・表現だけを表示します。通常モードや字幕で選択した辞書はそのまま表示します。")
+    .help("リアルタイムでは英単語のみを表示します。選択した単語の日本語の意味・詳細定義はマスクし、必要なときに表示できます。")
   }
 }
 struct ErrorDetails: View {
@@ -194,7 +200,7 @@ struct DictionaryPane: View {
   @ObservedObject var model: StudyModel
   var detailed: Bool { model.dictionaryIsPinned || model.hoverToken != nil || !model.realtime }
   var body: some View {
-    VStack(alignment: .leading, spacing: 18) {
+    VStack(alignment: .leading, spacing: detailed ? 12 : 18) {
       HStack {
         Label("辞書", systemImage: "book.closed").font(.headline)
         if model.dictionaryIsPinned {
@@ -209,6 +215,8 @@ struct DictionaryPane: View {
           Text(model.settings.dictionary == "eijiro" ? "英辞郎" : "macOS 辞書").font(.caption)
             .foregroundStyle(.secondary)
         }
+        CambridgeLookupButton(word: model.displayedToken.flatMap { $0.lexical ? $0.surface : nil } ?? "",
+          browser: model.settings.dictionaryBrowser, label: "調べる")
         Button {
           model.toggleDisplayedFavorite()
         } label: {
@@ -271,86 +279,48 @@ struct DictionaryPane: View {
           }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
       } else if let token = model.displayedToken {
-        VStack(alignment: .leading, spacing: 12) {
-          Text(token.surface).font(.system(size: 42, weight: .semibold)).textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-          HStack(spacing: 8) {
-            Text(pos(model.dictionaryEntry?.partOfSpeech ?? token.partOfSpeech)).font(.system(size: 13, weight: .medium))
-              .padding(.horizontal, 10).padding(.vertical, 5)
-              .background(Color.accentColor.opacity(0.12), in: Capsule())
-            if model.dictionaryIsPinned {
-              Label(model.pinnedExpression != nil ? "範囲を固定中" : "クリックで固定中", systemImage: "pin.fill")
-                .font(.caption).foregroundStyle(.orange)
-            } else if model.hoverToken != nil {
-              Text("マウスで選択中").font(.caption).foregroundStyle(.secondary)
-            }
-          }
-        }
-        if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
-          Text("省略前：" + entry.expandedForms.joined(separator: " / "))
-            .font(.callout).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-        }
-        if let headword = model.dictionaryEntry?.headword,
-          DictionaryText.normalize(headword) != DictionaryText.normalize(token.normalized) {
-          Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
-        }
-        Divider()
-        if let entry = model.dictionaryEntry {
-          ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-              VStack(alignment: .leading, spacing: 10) {
-                Text("意味").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(entry.shortGloss).font(.system(size: 30, weight: .medium)).lineSpacing(8)
-                  .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-              }
-              if detailed {
-                Divider()
-                VStack(alignment: .leading, spacing: 14) {
-                  Text("詳細定義").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                  if !entry.sections.isEmpty {
-                    if let pronunciation = entry.pronunciation, !pronunciation.isEmpty {
-                      Text(pronunciation).font(.system(size: 17)).foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    }
-                    ForEach(Array(entry.sections.enumerated()), id: \.offset) { _, section in
-                      VStack(alignment: .leading, spacing: 14) {
-                        Text(section.partOfSpeech).font(.headline).foregroundStyle(.secondary)
-                        ForEach(Array(section.senses.enumerated()), id: \.offset) { index, sense in
-                          VStack(alignment: .leading, spacing: 8) {
-                            Text("\(index + 1). " + sense.meaning).font(.system(size: 21, weight: .medium))
-                              .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                            ForEach(Array(sense.examples.enumerated()), id: \.offset) { _, example in
-                              Text(example).font(.system(size: 16)).foregroundStyle(.secondary)
-                                .lineSpacing(5).fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
-                            }
-                          }
-                        }
-                      }.lineSpacing(7).padding(.vertical, 6)
-                    }
-                  } else {
-                    ForEach(
-                      Array(DictionaryText.paragraphs(entry.definition).enumerated()), id: \.offset
-                    ) { _, paragraph in
-                      Text(paragraph).font(.system(size: 19)).lineSpacing(7)
-                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                    }
-                  }
+        ScrollView {
+          VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+              Text(token.surface).font(.system(size: 42, weight: .semibold)).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+              HStack(spacing: 8) {
+                Text(pos(model.dictionaryEntry?.partOfSpeech ?? token.partOfSpeech)).font(.system(size: 13, weight: .medium))
+                  .padding(.horizontal, 10).padding(.vertical, 5)
+                  .background(Color.accentColor.opacity(0.12), in: Capsule())
+                if model.dictionaryIsPinned {
+                  Label(model.pinnedExpression != nil ? "範囲を固定中" : "クリックで固定中", systemImage: "pin.fill")
+                    .font(.caption).foregroundStyle(.orange)
+                } else if model.hoverToken != nil {
+                  Text("マウスで選択中").font(.caption).foregroundStyle(.secondary)
                 }
               }
-            }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-              .background(
-                Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-          }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else if model.dictionaryLoading {
-          ProgressView("辞書を検索しています…").frame(
-            maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else {
-          Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "辞書項目が見つかりませんでした")
-            .font(.body).foregroundStyle(.secondary)
-          Spacer()
-        }
+            }
+            if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
+              Text("省略前：" + entry.expandedForms.joined(separator: " / "))
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+            if let headword = model.dictionaryEntry?.headword,
+              DictionaryText.normalize(headword) != DictionaryText.normalize(token.normalized) {
+              Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
+            }
+            Divider()
+            if let entry = model.dictionaryEntry {
+              PlaybackDictionaryDefinition(entry: entry, detailed: detailed,
+                initiallyMasked: model.settings.advancedMode)
+            } else if model.dictionaryLoading {
+              ProgressView("辞書を検索しています…").frame(
+                maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+              Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "辞書項目が見つかりませんでした")
+                .font(.body).foregroundStyle(.secondary)
+              Spacer()
+            }
+          }.frame(maxWidth: .infinity, alignment: .leading)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+          .id(PlaybackDictionaryDefinition.Identity(session: model.session, token: token.id,
+            dictionary: model.settings.dictionary, immersion: model.settings.advancedMode))
       } else {
         VStack(spacing: 12) {
           Image(systemName: "text.cursor").font(.system(size: 30)).foregroundStyle(.tertiary)
@@ -436,6 +406,7 @@ struct PlaybackControls: View {
 }
 struct SubtitlePane: View {
   @ObservedObject var model: StudyModel
+  @State private var visibleLineID: UUID?
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       // Keep the subtitle viewport and row spacing unchanged when search opens or closes.
@@ -446,11 +417,18 @@ struct SubtitlePane: View {
         if model.subtitleSearchVisible {
           searchControls
         } else {
-          Text(model.playing ? "再生位置に追従" : "過去・未来へスクロールできます")
+          Text(model.subtitleScrollPinned ? "スクロール固定中" : model.playing
+            ? "再生位置に追従" : "過去・未来へスクロールできます")
             .font(.caption).foregroundStyle(.secondary)
           Button { model.openSubtitleSearch() } label: { Image(systemName: "magnifyingglass") }
             .help("字幕内を検索（⌘F）").accessibilityLabel("字幕内を検索")
         }
+        Button { model.toggleSubtitleScrollPin(at: visibleLineID) } label: {
+          Image(systemName: model.subtitleScrollPinned ? "pin.fill" : "pin")
+            .foregroundStyle(model.subtitleScrollPinned ? Color.orange : Color.secondary)
+        }.help(model.subtitleScrollPinned ? "字幕の固定を解除して再生位置へ戻る" : "字幕のスクロール位置を固定（行の余白をダブルクリックでも切替）")
+          .accessibilityLabel(model.subtitleScrollPinned ? "字幕のスクロール固定を解除" : "字幕のスクロール位置を固定")
+          .accessibilityValue(model.subtitleScrollPinned ? "固定中" : "再生位置に追従")
       }.frame(height: 28)
       ScrollViewReader { proxy in
         GeometryReader { geometry in
@@ -461,13 +439,25 @@ struct SubtitlePane: View {
                   model: model, line: line, presentation: SubtitleLinePresentation(model: model, line: line)
                 ).equatable()
                 .frame(minHeight: max(60, (geometry.size.height - 16) / 3), alignment: .center)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { model.toggleSubtitleScrollPin(at: line.id) }
+                .overlay {
+                  if model.subtitlePinnedLineID == line.id {
+                    RoundedRectangle(cornerRadius: 8).stroke(Color.orange, lineWidth: 2)
+                      .allowsHitTesting(false)
+                  }
+                }
                 .id(line.id)
               }
-            }.padding(.vertical, max(0, (geometry.size.height - 60) / 3))
+            }.scrollTargetLayout().padding(.vertical, max(0, (geometry.size.height - 60) / 3))
           }
+          .scrollPosition(id: $visibleLineID, anchor: .center)
           .onAppear { follow(proxy) }
           .onChange(of: model.currentLineIndex) { follow(proxy) }
           .onChange(of: model.playing) { if model.playing { follow(proxy) } }
+          .onChange(of: model.subtitleScrollPinned) { _, pinned in
+            if !pinned { follow(proxy, ignoringSearch: true) }
+          }
           .onChange(of: model.draggingDictionarySelection) { _, dragging in
             if !dragging && model.playing { follow(proxy) }
           }
@@ -501,12 +491,10 @@ struct SubtitlePane: View {
         .help("検索を閉じて再生位置へ戻る（Esc）").accessibilityLabel("字幕検索を閉じる")
     }
   }
-  func follow(_ proxy: ScrollViewProxy) {
-    guard !model.draggingDictionarySelection, !model.browsingSubtitleSearch else { return }
-    let lines = model.subtitleLines
-    guard lines.indices.contains(model.currentLineIndex) else { return }
+  func follow(_ proxy: ScrollViewProxy, ignoringSearch: Bool = false) {
+    guard let id = model.subtitleFollowLineID(ignoringSearch: ignoringSearch) else { return }
     // Follow on line changes, not on every clock tick: scrolling still works within a line.
-    proxy.scrollTo(lines[model.currentLineIndex].id, anchor: .center)
+    proxy.scrollTo(id, anchor: .center)
   }
   func showSearchResult(_ proxy: ScrollViewProxy) {
     guard model.subtitleSearchVisible, let match = model.currentSubtitleSearchMatch else { return }

@@ -16,6 +16,7 @@ struct SettingsTests {
       #expect(settings.timeout == 120)
       #expect(settings.aiGrammarEnabled)
       #expect(!settings.advancedMode)
+      #expect(settings.dictionaryBrowser == "system")
     }
   }
   @Test func providerModelsAndCachePathRoundTripSeparately() throws {
@@ -25,6 +26,7 @@ struct SettingsTests {
     settings.cacheDirectory = "/tmp/Subritz Cache"
     settings.aiGrammarEnabled = false
     settings.advancedMode = true
+    settings.dictionaryBrowser = "browser:com.apple.Safari"
     let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
     #expect(decoded == settings)
     #expect(decoded.grammarModel == "Local-Model")

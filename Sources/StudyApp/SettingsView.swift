@@ -8,6 +8,7 @@ struct SettingsView: View {
   @State private var apiKey = APISecret.read()
   @State private var choosingDictionary = false
   @State private var window = WindowReference()
+  @State private var dictionaryBrowsers: [DictionaryBrowser.Application] = []
   var body: some View {
     VStack(spacing: 0) {
       Form {
@@ -43,6 +44,13 @@ struct SettingsView: View {
             .font(.caption).foregroundStyle(.secondary)
         }
         Section("辞書") {
+          LabeledContent("辞書を開く際のブラウザ") {
+            DictionaryBrowserPicker(selection: $model.settings.dictionaryBrowser,
+              applications: dictionaryBrowsers)
+              .frame(width: 280)
+          }
+          Text("Cambridge Dictionaryの英英辞書を開く方法を選びます。")
+            .font(.caption).foregroundStyle(.secondary)
           Picker("使用する辞書", selection: $model.settings.dictionary) {
             Text("macOS 標準辞書").tag("macOS")
             Text("英辞郎").tag("eijiro")
@@ -108,6 +116,7 @@ struct SettingsView: View {
         }.keyboardShortcut(.cancelAction)
       }.padding(16)
     }.frame(width: 720, height: 780)
+      .onAppear { dictionaryBrowsers = DictionaryBrowser.installed() }
       .background(SettingsWindowTitle(window: window).frame(width: 0, height: 0))
       .onChange(of: model.settings) { old, _ in model.saveSettings(previous: old) }
       .onChange(of: apiKey) { _, key in model.scheduleAPIKeySave(key) }
