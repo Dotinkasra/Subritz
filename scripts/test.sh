@@ -7,4 +7,13 @@ SDK_ARGS=()
 if [[ -d /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ]]; then
  SDK_ARGS=(--sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk)
 fi
-swift test --disable-sandbox --build-system native "${SDK_ARGS[@]}" --disable-xctest --enable-swift-testing -Xswiftc -F -Xswiftc /Library/Developer/CommandLineTools/Library/Developer/Frameworks -Xlinker -F -Xlinker /Library/Developer/CommandLineTools/Library/Developer/Frameworks -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/Frameworks "$@"
+# Use the selected developer installation, including Xcode on hosted runners.
+DEVELOPER_ROOT="${DEVELOPER_DIR:-$(xcode-select -p)}"
+TEST_FRAMEWORK_ARGS=()
+for FRAMEWORKS in "$DEVELOPER_ROOT/Library/Developer/Frameworks" "$DEVELOPER_ROOT/Platforms/MacOSX.platform/Developer/Library/Frameworks"; do
+ if [[ -d "$FRAMEWORKS/Testing.framework" ]]; then
+  TEST_FRAMEWORK_ARGS=(-Xswiftc -F -Xswiftc "$FRAMEWORKS" -Xlinker -F -Xlinker "$FRAMEWORKS" -Xlinker -rpath -Xlinker "$FRAMEWORKS")
+  break
+ fi
+done
+swift test --disable-sandbox --build-system native "${SDK_ARGS[@]}" --disable-xctest --enable-swift-testing "${TEST_FRAMEWORK_ARGS[@]}" "$@"

@@ -1,0 +1,89 @@
+name: Build and publish macOS release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Test and build universal DMG
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      SUBRITZ_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run tests
+        run: ./scripts/test.sh
+
+      - name: Build and verify disk image
+        run: ./scripts/release.sh "$GITHUB_REF_NAME"
+
+      - name: Upload verified release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-dmg
+          path: |
+            dist/Subritz-*-universal.dmg
+            dist/Subritz-*-universal.dmg.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-dmg
+          path: dist
+
+      - name: Create release and attach DMG
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          dmg="dist/Subritz-$tag-universal.dmg"
+          test -s "$dmg"
+          test -s "$dmg.sha256"
+          (cd dist && sha256sum --check "Subritz-$tag-universal.dmg.sha256")
+          cat > release-notes.md <<'NOTES'
+          macOS 15以降 / Apple Silicon・Intel対応。
+          DMGを開き、Subritz.appをApplicationsへドラッグしてください。
+          このビルドはad-hoc署名です。Developer ID署名・Appleの公証は行っていません。
+          yt-dlpと辞書データは同梱していません。READMEの動作環境をご確認ください。
+          NOTES
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # A retry can finish uploading a draft or update a mutable release.
+            gh release upload "$tag" "$dmg" "$dmg.sha256" --clobber
+            if [[ "$(gh release view "$tag" --json isDraft --jq .isDraft)" == true ]]; then
+              gh release edit "$tag" --draft=false
+            fi
+          else
+            flags=()
+            if [[ "$tag" == *-* ]]; then flags+=(--prerelease); fi
+            gh release create "$tag" "$dmg" "$dmg.sha256" --verify-tag \
+              --title "Subritz $tag" --generate-notes --notes-file release-notes.md "${flags[@]}"
+          fi

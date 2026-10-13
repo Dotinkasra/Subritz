@@ -41,6 +41,19 @@ open dist/Subritz.app
 
 アプリアイコンは`scripts/Assets/AppIconSource.png`を元に、CoreGraphicsとmacOS標準の`iconutil`で角丸・透明余白付きの`.icns`を生成します。元画像や生成スクリプトを変更すると、次のビルドで自動更新されます。
 
+## リリース
+
+`v0.2.0`のようなバージョンタグをGitHubへプッシュすると、GitHub Actionsがテストを実行し、Apple Silicon・Intel対応の最適化ビルドを1つのDMGにまとめて[Releases](https://github.com/Dotinkasra/Subritz/releases)へ公開します。`v0.2.1-beta.1`のようなタグはプレリリースになります。
+
+DMGには`Subritz.app`と`Applications`へのショートカットが入り、SHA-256チェックサムも公開します。アプリのバージョン番号はタグから設定します。アプリ・DMGの検証やテストに失敗した場合は公開しません。署名はad-hoc署名で、Developer ID署名・Appleの公証は行いません。yt-dlp・辞書データ・利用者の保存データは同梱しません。
+
+```sh
+git push origin main
+git push origin v0.2.0
+```
+
+ローカルで同じDMGを作る場合は`./scripts/release.sh v0.2.0`を実行します。`dist/Subritz-v0.2.0-universal.dmg`とその`.sha256`ファイルを生成します。公開に使うワークフローは`.github/workflows/release.yml`で、リリースの作成にはGitHub標準の`GITHUB_TOKEN`を使います。追加のAPIキーは必要ありません。
+
 ## 使い方
 
 1. 設定（⌘,）で`yt-dlp`の実行ファイルを確認します。通常はPATHやHomebrewの標準パスから自動検出します。

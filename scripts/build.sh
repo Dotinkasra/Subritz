@@ -25,6 +25,12 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Subritz" "$APP/Contents/MacOS/Subritz"
 rm -f "$APP/Contents/MacOS/YouTubeEnglishStudy"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
+if [[ -n "${SUBRITZ_VERSION:-}" ]]; then
+ /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $SUBRITZ_VERSION" "$APP/Contents/Info.plist"
+fi
+if [[ -n "${SUBRITZ_BUILD_NUMBER:-}" ]]; then
+ /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $SUBRITZ_BUILD_NUMBER" "$APP/Contents/Info.plist"
+fi
 if [[ -n "${SUBRITZ_BUNDLE_ID:-}" ]]; then
  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $SUBRITZ_BUNDLE_ID" "$APP/Contents/Info.plist"
 fi
