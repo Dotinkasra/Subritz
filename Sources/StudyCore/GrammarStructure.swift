@@ -127,9 +127,13 @@ public struct GrammarWindow {
   static func estimatedCost(_ sentence: Sentence) -> Int {
     // Budget the compact wire rows rather than the verbose in-memory Codable object.
     let words = sentence.tokens.flatMap { components($0.surface) }
-    return words.reduce(0) {
-      $0 + 8 + $1.utf8.count / 3 + (function($1)?.utf8.count ?? 0) / 3
-    } + sentence.text.utf8.count / 3 + 100
+    var cost = sentence.text.utf8.count / 3 + 100
+    for word in words {
+      let surfaceCost = word.utf8.count / 3
+      let functionCost = (function(word)?.utf8.count ?? 0) / 3
+      cost += 8 + surfaceCost + functionCost
+    }
+    return cost
   }
   public func readingPayload() throws -> String {
     struct Speech: Encodable {
