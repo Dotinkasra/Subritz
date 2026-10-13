@@ -54,6 +54,8 @@ git push origin v0.2.0
 
 ローカルで同じDMGを作る場合は`./scripts/release.sh v0.2.0`を実行します。`dist/Subritz-v0.2.0-universal.dmg`とその`.sha256`ファイルを生成します。公開に使うワークフローは`.github/workflows/release.yml`で、リリースの作成にはGitHub標準の`GITHUB_TOKEN`を使います。追加のAPIキーは必要ありません。
 
+既存タグのビルドを開始し直す場合は、GitHubのActionsでこのワークフローの「Run workflow」を開き、`tag`に対象のタグを指定できます。タグが指すソースをビルドするため、タグを変更する必要はありません。
+
 ## 使い方
 
 1. 設定（⌘,）で`yt-dlp`の実行ファイルを確認します。通常はPATHやHomebrewの標準パスから自動検出します。
