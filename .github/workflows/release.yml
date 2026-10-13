@@ -61,6 +61,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out release notes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
       - name: Download verified release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -79,15 +84,15 @@ jobs:
           test -s "$dmg"
           test -s "$dmg.sha256"
           (cd dist && sha256sum --check "Subritz-$tag-universal.dmg.sha256")
-          cat > release-notes.md <<'NOTES'
-          macOS 15以降 / Apple Silicon・Intel対応。
-          DMGを開き、Subritz.appをApplicationsへドラッグしてください。
-          このビルドはad-hoc署名です。Developer ID署名・Appleの公証は行っていません。
-          yt-dlpと辞書データは同梱していません。READMEの動作環境をご確認ください。
-          NOTES
+          notes="release-notes/$tag.md"
+          if [[ ! -s "$notes" ]]; then
+            echo "Release notes not found: $notes" >&2
+            exit 1
+          fi
           if gh release view "$tag" >/dev/null 2>&1; then
             # A retry can finish uploading a draft or update a mutable release.
             gh release upload "$tag" "$dmg" "$dmg.sha256" --clobber
+            gh release edit "$tag" --title "$tag" --notes-file "$notes"
             if [[ "$(gh release view "$tag" --json isDraft --jq .isDraft)" == true ]]; then
               gh release edit "$tag" --draft=false
             fi
@@ -95,5 +100,5 @@ jobs:
             flags=()
             if [[ "$tag" == *-* ]]; then flags+=(--prerelease); fi
             gh release create "$tag" "$dmg" "$dmg.sha256" --verify-tag \
-              --title "Subritz $tag" --generate-notes --notes-file release-notes.md "${flags[@]}"
+              --title "$tag" --notes-file "$notes" "${flags[@]}"
           fi
