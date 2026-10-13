@@ -27,7 +27,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     env:
-      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       SUBRITZ_BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - name: Check out tagged source
