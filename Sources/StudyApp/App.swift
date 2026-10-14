@@ -181,7 +181,7 @@ struct ImmersionModeToggle: View {
       get: { model.settings.advancedMode }, set: { model.setAdvancedMode($0) }
     ))
     .toggleStyle(.switch).fixedSize()
-    .help("リアルタイムでは英単語のみを表示します。選択した単語の日本語の意味・詳細定義はマスクし、必要なときに表示できます。")
+    .help("リアルタイムでは日本語の意味を隠します。選択した単語の日本語の意味・詳細定義はマスクし、必要なときに表示できます。")
   }
 }
 struct ErrorDetails: View {
@@ -239,17 +239,14 @@ struct DictionaryPane: View {
                 .system(size: min(68, geometry.size.width / 8), weight: .bold)
               )
               .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+              if model.settings.realtimePronunciationEnabled {
+                DictionaryPronunciation(value: model.dictionaryEntry?.pronunciation, size: 22)
+              }
               if !model.realtimeEnglishOnly {
-                Text(pos(model.dictionaryEntry?.partOfSpeech ?? token.partOfSpeech)).font(.system(size: 22, weight: .medium))
-                  .foregroundStyle(.secondary)
                 if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
                   Text("省略前：" + entry.expandedForms.joined(separator: " / "))
                     .font(.system(size: 18)).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                }
-                if let headword = model.dictionaryEntry?.headword,
-                  DictionaryText.normalize(headword) != DictionaryText.normalize(token.normalized) {
-                  Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
                 }
                 if let entry = model.dictionaryEntry {
                   let meanings = realtimeMeanings(entry.shortGloss)
@@ -277,50 +274,60 @@ struct DictionaryPane: View {
               Text("発話中の単語を表示します").font(.title2).foregroundStyle(.secondary)
             }
           }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .textSelection(.enabled)
         }
       } else if let token = model.displayedToken {
-        ScrollView {
-          VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 12) {
-              Text(token.surface).font(.system(size: 42, weight: .semibold)).textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-              HStack(spacing: 8) {
-                Text(pos(model.dictionaryEntry?.partOfSpeech ?? token.partOfSpeech)).font(.system(size: 13, weight: .medium))
-                  .padding(.horizontal, 10).padding(.vertical, 5)
-                  .background(Color.accentColor.opacity(0.12), in: Capsule())
-                if model.dictionaryIsPinned {
-                  Label(model.pinnedExpression != nil ? "範囲を固定中" : "クリックで固定中", systemImage: "pin.fill")
-                    .font(.caption).foregroundStyle(.orange)
-                } else if model.hoverToken != nil {
-                  Text("マウスで選択中").font(.caption).foregroundStyle(.secondary)
+        ScrollViewReader { proxy in
+          ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+              VStack(alignment: .leading, spacing: 12) {
+                Text(token.surface).font(.system(size: 42, weight: .semibold)).textSelection(.enabled)
+                  .fixedSize(horizontal: false, vertical: true)
+                DictionaryPronunciation(value: model.dictionaryEntry?.pronunciation)
+                HStack(spacing: 8) {
+                  Text(pos(model.dictionaryEntry?.partOfSpeech ?? token.partOfSpeech)).font(.system(size: 13, weight: .medium))
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+                  if model.dictionaryIsPinned {
+                    Label(model.pinnedExpression != nil ? "範囲を固定中" : "クリックで固定中", systemImage: "pin.fill")
+                      .font(.caption).foregroundStyle(.orange)
+                  } else if model.hoverToken != nil {
+                    Text("マウスで選択中").font(.caption).foregroundStyle(.secondary)
+                  }
                 }
               }
+              if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
+                Text("省略前：" + entry.expandedForms.joined(separator: " / "))
+                  .font(.callout).foregroundStyle(.secondary)
+                  .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+              }
+              if let headword = model.dictionaryEntry?.headword,
+                DictionaryText.normalize(headword) != DictionaryText.normalize(token.normalized) {
+                Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
+              }
+              Divider()
+              if let entry = model.dictionaryEntry {
+                PlaybackDictionaryDefinition(entry: entry, detailed: detailed,
+                  initiallyMasked: model.settings.advancedMode,
+                  initiallyExpanded: model.hoverToken == nil)
+                  .id(PlaybackDictionaryDefinition.Identity(session: model.session, token: token.id,
+                    dictionary: model.settings.dictionary, immersion: model.settings.advancedMode))
+              } else if model.dictionaryLoading {
+                ProgressView("辞書を検索しています…").frame(
+                  maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+              } else {
+                Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "辞書項目が見つかりませんでした")
+                  .font(.body).foregroundStyle(.secondary)
+                Spacer()
+              }
+            }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+              .id("dictionary-top")
+          }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onChange(of: PlaybackDictionaryDefinition.Identity(session: model.session, token: token.id,
+              dictionary: model.settings.dictionary, immersion: model.settings.advancedMode)) {
+              proxy.scrollTo("dictionary-top", anchor: .top)
             }
-            if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
-              Text("省略前：" + entry.expandedForms.joined(separator: " / "))
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            }
-            if let headword = model.dictionaryEntry?.headword,
-              DictionaryText.normalize(headword) != DictionaryText.normalize(token.normalized) {
-              Text("辞書の見出し：" + headword).font(.caption).foregroundStyle(.secondary)
-            }
-            Divider()
-            if let entry = model.dictionaryEntry {
-              PlaybackDictionaryDefinition(entry: entry, detailed: detailed,
-                initiallyMasked: model.settings.advancedMode)
-            } else if model.dictionaryLoading {
-              ProgressView("辞書を検索しています…").frame(
-                maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            } else {
-              Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "辞書項目が見つかりませんでした")
-                .font(.body).foregroundStyle(.secondary)
-              Spacer()
-            }
-          }.frame(maxWidth: .infinity, alignment: .leading)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity)
-          .id(PlaybackDictionaryDefinition.Identity(session: model.session, token: token.id,
-            dictionary: model.settings.dictionary, immersion: model.settings.advancedMode))
+        }
       } else {
         VStack(spacing: 12) {
           Image(systemName: "text.cursor").font(.system(size: 30)).foregroundStyle(.tertiary)
@@ -452,6 +459,7 @@ struct SubtitlePane: View {
             }.scrollTargetLayout().padding(.vertical, max(0, (geometry.size.height - 60) / 3))
           }
           .scrollPosition(id: $visibleLineID, anchor: .center)
+          .onChange(of: visibleLineID) { _, id in model.prefetchDictionary(nearLine: id) }
           .onAppear { follow(proxy) }
           .onChange(of: model.currentLineIndex) { follow(proxy) }
           .onChange(of: model.playing) { if model.playing { follow(proxy) } }

@@ -11,6 +11,15 @@ public struct DictionaryEntry: Sendable {
   public var pronunciation: String? = nil
   public var expandedForms: [String] = []
   public var usedPartOfSpeechFallback = false
+  public var blocks: [DictionaryBlock] = []
+}
+public struct DictionaryBlock: Codable, Sendable, Equatable {
+  public enum Role: String, Codable, Sendable {
+    case partOfSpeech, meaning, example, translation, note, phrase, metadata, body
+  }
+  public var text: String
+  public var role: Role
+  public init(_ text: String, role: Role) { self.text = text; self.role = role }
 }
 public struct DictionarySection: Sendable {
   public var partOfSpeech: String
@@ -45,6 +54,16 @@ public enum DictionaryText {
     .components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter {
       !$0.isEmpty
     }
+  }
+  public static func pronunciation(_ definition: String) -> String? {
+    let pattern = #"【発音】\s*([^【\r\n■◆]+)"#
+    let regex = try! NSRegularExpression(pattern: pattern)
+    let text = definition as NSString
+    guard let match = regex.firstMatch(in: definition, range: NSRange(location: 0, length: text.length))
+    else { return nil }
+    let value = text.substring(with: match.range(at: 1))
+      .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "、,，")))
+    return value.isEmpty ? nil : value
   }
   public static func gloss(_ definition: String) -> String {
     let parts = definition.components(separatedBy: CharacterSet(charactersIn: "\n；;"))
@@ -208,33 +227,89 @@ enum EijiroText {
         + sense.definition.replacingOccurrences(of: "■", with: "\n■")
         .replacingOccurrences(of: "◆", with: "\n◆")
     }.joined(separator: "\n")
+    let group = selection.senses.first?.group ?? 0
+    let pronunciation = ordered(senses).filter { $0.group == group }
+      .compactMap { DictionaryText.pronunciation($0.definition) }.first
+      ?? DictionaryText.pronunciation(detailed)
     return DictionaryEntry(definition: detailed, shortGloss: gloss.isEmpty ? "日本語の語義なし" : gloss,
       partOfSpeech: selection.senses.first.flatMap { partOfSpeech($0, preferred: pos) },
-      usedPartOfSpeechFallback: selection.fallback)
+      sections: sections(senses),
+      pronunciation: pronunciation,
+      usedPartOfSpeechFallback: selection.fallback, blocks: blocks(senses))
+  }
+  static func blocks(_ senses: [Sense]) -> [DictionaryBlock] {
+    let labels = ["名": "名詞", "動": "動詞", "他動": "他動詞", "自動": "自動詞", "自他動": "自他動詞",
+      "形": "形容詞", "副": "副詞", "代": "代名詞", "代名": "代名詞", "前": "前置詞", "前置": "前置詞",
+      "接": "接続詞", "接続": "接続詞", "間": "間投詞", "間投": "間投詞", "句動": "句動詞",
+      "句自動": "句動詞", "句他動": "句動詞", "定": "限定詞", "冠": "冠詞", "助動": "助動詞"]
+    var result: [DictionaryBlock] = []
+    var previousGroup: String?
+    for sense in ordered(senses) {
+      if let label = sense.label {
+        let group = "\(sense.group):\(label)"
+        if previousGroup != group {
+          var heading = label.components(separatedBy: "・").map { labels[$0] ?? $0 }.joined(separator: " / ")
+          if sense.group > 0 { heading += "（同綴語\(sense.group)）" }
+          result.append(DictionaryBlock(heading, role: .partOfSpeech))
+          previousGroup = group
+        }
+      }
+      let lines = sense.definition.replacingOccurrences(of: "■", with: "\n■")
+        .replacingOccurrences(of: "◆", with: "\n◆").components(separatedBy: .newlines)
+      for (index, line) in lines.enumerated() {
+        var text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { continue }
+        let role: DictionaryBlock.Role = text.hasPrefix("■") ? .example
+          : text.hasPrefix("◆") ? .note : text.hasPrefix("【") ? .metadata : .meaning
+        if index == 0, sense.number > 0 { text = "\(sense.number). " + text }
+        result.append(DictionaryBlock(text, role: role))
+      }
+    }
+    return result
+  }
+  static func sections(_ senses: [Sense]) -> [DictionarySection] {
+    var sections: [DictionarySection] = []
+    var keys: [String] = []
+    for sense in ordered(senses) {
+      guard let pos = partOfSpeech(sense, preferred: nil), reference(sense.definition) == nil else { continue }
+      let text = sense.definition.components(separatedBy: "■")[0].components(separatedBy: "◆")[0]
+        .components(separatedBy: "【")[0].trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !text.isEmpty else { continue }
+      let key = "\(sense.group):\(sense.label ?? "")"
+      let examples = sense.definition.components(separatedBy: "■").dropFirst().map {
+        $0.components(separatedBy: "◆")[0].trimmingCharacters(in: .whitespacesAndNewlines)
+      }.filter { !$0.isEmpty }
+      let item = DictionarySense(meaning: text, examples: examples, shortMeaning: meaning(sense.definition))
+      if let index = keys.firstIndex(of: key) { sections[index].senses.append(item) }
+      else { keys.append(key); sections.append(DictionarySection(partOfSpeech: pos, senses: [item])) }
+    }
+    return sections
   }
 }
 public struct MacDictionaryProvider: DictionaryProvider {
   public init() {}
   public func lookup(_ token: Token) async -> DictionaryEntry? {
-    await Task.detached {
+    let task = Task.detached(priority: Task.currentPriority) {
       var fallback: DictionaryEntry?
       for word in DictionaryText.candidates(token) {
-        if let entry = MacDictionaryAccess.entry(for: word, pos: token.partOfSpeech) {
+        guard !Task.isCancelled else { return nil as DictionaryEntry? }
+        if let entry = await MacDictionaryAccess.lookup(for: word, pos: token.partOfSpeech) {
           if !entry.usedPartOfSpeechFallback { return entry }
           if fallback == nil { fallback = entry }
         }
       }
       return fallback
-    }.value
+    }
+    return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
   }
   public func lookupExpressions(_ expressions: [[Token]]) async -> [DictionaryEntry?] {
-    let task = Task.detached { () -> [DictionaryEntry?] in
+    let task = Task.detached(priority: Task.currentPriority) { () -> [DictionaryEntry?] in
       var results: [DictionaryEntry?] = []
       for tokens in expressions {
         var found: DictionaryEntry?
         for word in DictionaryExpressions.candidates(tokens) {
           guard !Task.isCancelled else { return Array(repeating: nil, count: expressions.count) }
-          if let entry = MacDictionaryAccess.entry(for: word) { found = entry; break }
+          if let entry = await MacDictionaryAccess.lookup(for: word) { found = entry; break }
         }
         results.append(found)
       }
@@ -348,12 +423,14 @@ public actor EijiroProvider: DictionaryProvider {
       direct.expandedForms = forms
       if !forms.isEmpty {
         direct.definition = "省略前の形: " + forms.joined(separator: " / ") + "\n\n" + direct.definition
+        direct.blocks.insert(DictionaryBlock("省略前の形: " + forms.joined(separator: " / "), role: .note), at: 0)
         var glosses: [String] = []
         for form in forms {
           // The expansion's POS may differ from the original contracted token.
           guard let resolved = resolve(form, pos: nil, visited: visited.union([normalized])),
             resolved.shortGloss != "日本語の語義なし" else { continue }
           direct.definition += "\n\n参照先: " + form + "\n" + resolved.definition
+          direct.blocks += [DictionaryBlock("参照先: " + form, role: .phrase)] + resolved.blocks
           if !glosses.contains(resolved.shortGloss) { glosses.append(resolved.shortGloss) }
         }
         if direct.shortGloss != "日本語の語義なし" { glosses.insert(direct.shortGloss, at: 0) }
@@ -380,13 +457,16 @@ public actor EijiroProvider: DictionaryProvider {
         definition: direct.definition + "\n\n参照先: " + reference + "\n" + resolved.definition,
         shortGloss: resolved.shortGloss, headword: reference,
         partOfSpeech: direct.partOfSpeech ?? resolved.partOfSpeech,
-        usedPartOfSpeechFallback: direct.usedPartOfSpeechFallback || resolved.usedPartOfSpeechFallback)
+        pronunciation: direct.pronunciation ?? resolved.pronunciation,
+        usedPartOfSpeechFallback: direct.usedPartOfSpeechFallback || resolved.usedPartOfSpeechFallback,
+        blocks: direct.blocks + [DictionaryBlock("参照先: " + reference, role: .phrase)] + resolved.blocks)
     }
     return direct
   }
   public func lookup(_ token: Token) async -> DictionaryEntry? {
     var fallback: DictionaryEntry?
     for word in DictionaryText.candidates(token) {
+      guard !Task.isCancelled else { return nil }
       if let entry = resolve(word, pos: token.partOfSpeech, visited: []) {
         if entry.shortGloss != "日本語の語義なし", !entry.usedPartOfSpeechFallback { return entry }
         if fallback == nil || (fallback?.shortGloss == "日本語の語義なし" && entry.shortGloss != "日本語の語義なし") {
@@ -421,6 +501,7 @@ public actor EijiroProvider: DictionaryProvider {
       for row in rows {
         present.insert(DictionaryText.normalize(EijiroText.sense(row[0], row[1]).headword))
       }
+      await Task.yield()
     }
     return forms.map { candidates in
       for word in candidates where present.contains(DictionaryText.normalize(word)) {

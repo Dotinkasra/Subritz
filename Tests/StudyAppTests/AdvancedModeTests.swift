@@ -5,6 +5,42 @@ import Testing
 @testable import StudyCore
 
 @MainActor struct AdvancedModeTests {
+  @Test func pronunciationRemainsAvailableInImmersionAndPreferenceSavesWithoutRestartingLookup() async throws {
+    let (model, tokens, root, defaults, suite) = try await DictionaryExpressionInteractionTests().fixture()
+    defer {
+      model.closeVideo()
+      defaults.removePersistentDomain(forName: suite)
+      try? FileManager.default.removeItem(at: root)
+    }
+    let file = root.appendingPathComponent("pronunciation.txt")
+    try "■stack up : 【発音】fixture-ipa、【＠】自作音\n■stack up {句自動} : 自作句義A".write(
+      to: file, atomically: true, encoding: .utf8)
+    _ = try await model.eijiro?.importFile(file)
+    model.setAdvancedMode(true)
+    model.update(time: tokens[1].startTime + 0.01, duration: 5, state: 2)
+    await model.dictionaryTask?.value
+    #expect(model.realtimeEnglishOnly)
+    let entry = try #require(model.dictionaryEntry)
+    #expect(entry.pronunciation == "fixture-ipa")
+    let queryID = model.selectedDictionaryID
+    let cacheKeys = Set(model.dictionaryCache.keys)
+    let session = model.session
+    for enabled in [false, true, false] {
+      let previous = model.settings
+      model.settings.realtimePronunciationEnabled = enabled
+      model.saveSettings(previous: previous)
+      #expect(AppSettings.load(defaults: defaults).realtimePronunciationEnabled == enabled)
+      #expect(model.dictionaryEntry?.pronunciation == entry.pronunciation)
+      #expect(model.dictionaryEntry?.definition == entry.definition)
+      #expect(model.selectedDictionaryID == queryID && Set(model.dictionaryCache.keys) == cacheKeys)
+      #expect(model.session == session && model.displayedToken?.surface == "stacks up")
+      #expect(model.dictionaryTask?.isCancelled == false)
+    }
+    model.setAdvancedMode(false)
+    #expect(!model.realtimeEnglishOnly && model.dictionaryEntry?.pronunciation == "fixture-ipa")
+    #expect(!StudyModel(prepareStorage: false, defaults: defaults).settings.realtimePronunciationEnabled)
+  }
+
   @Test func switchingOnlyChangesPresentationAndPersistsWithoutInvalidDraftSettings() async throws {
     let (model, tokens, root, defaults, suite) = try await DictionaryExpressionInteractionTests().fixture()
     defer {

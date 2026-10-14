@@ -37,6 +37,7 @@ struct EijiroTests {
     #expect(noun?.definition.contains("{名-6}") == true)
     #expect(noun?.definition.contains("A silver robot sorts seven paper stars") == true)
     #expect(noun?.definition.contains("【発音】") == true)
+    #expect(noun?.pronunciation == "sample-pronunciation")
     #expect(noun?.definition.contains("自作別見出し義") == false)
     let verb = await provider.lookup(token(pos: "Verb"))
     #expect(verb?.shortGloss == "自作動義A")
@@ -56,6 +57,51 @@ struct EijiroTests {
     #expect(
       try db.rows("SELECT COUNT(*) FROM entries WHERE normalized_headword=?", values: ["sampleunit"])[
         0][0] == "8")
+  }
+  @Test func pronunciationIsExtractedWithoutLevelKanaInflectionsOrTruncation() {
+    #expect(DictionaryText.pronunciation("【レベル】7、【発音】authored-sound | second-sound、【＠】自作音、【変化】自作変化")
+      == "authored-sound | second-sound")
+    #expect(DictionaryText.pronunciation("【発音】authored-sound\n自作の語義") == "authored-sound")
+    #expect(DictionaryText.pronunciation("【発音】、【変化】自作変化") == nil)
+    #expect(DictionaryText.pronunciation("自作の語義だけ") == nil)
+  }
+  @Test func pronunciationFollowsTheSelectedHomograph() {
+    let senses = [
+      EijiroText.sense("authoredunit {1}", "【発音】first-sound、【＠】自作音A"),
+      EijiroText.sense("authoredunit {1-名}", "自作名義"),
+      EijiroText.sense("authoredunit {2}", "【発音】second-sound、【＠】自作音B"),
+      EijiroText.sense("authoredunit {2-動}", "自作動義"),
+    ]
+    #expect(EijiroText.entry(senses, pos: "Noun").pronunciation == "first-sound")
+    #expect(EijiroText.entry(senses, pos: "Verb").pronunciation == "second-sound")
+  }
+  @Test func favoriteSnapshotsPreservePronunciationAndReadOlderPayloads() throws {
+    let entry = EijiroText.entry(records.map { EijiroText.sense($0.0, $0.1) }, pos: "Noun")
+    let favorite = FavoriteWord(token: token(), entry: entry, video: nil)
+    #expect(favorite.pronunciation == "sample-pronunciation")
+    let data = try JSONEncoder().encode(favorite)
+    #expect(try JSONDecoder().decode(FavoriteWord.self, from: data).pronunciation == "sample-pronunciation")
+    #expect(try JSONDecoder().decode(FavoriteWord.self, from: data).dictionaryBlocks == entry.blocks)
+    var older = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    older.removeValue(forKey: "pronunciation")
+    older.removeValue(forKey: "dictionaryBlocks")
+    let decoded = try JSONDecoder().decode(FavoriteWord.self, from: JSONSerialization.data(withJSONObject: older))
+    #expect(decoded.pronunciation == nil)
+    #expect(decoded.dictionaryBlocks == nil)
+    #expect(DictionaryText.pronunciation(decoded.definition) == "sample-pronunciation")
+  }
+  @Test func structuredBodyKeepsMeaningsExamplesNotesAndMetadataDistinct() {
+    let entry = EijiroText.entry([
+      EijiroText.sense("sampleunit {名-1}", "〈自作条件〉自作義A■・A paper robot turns. 自作訳A◆自作注記"),
+      EijiroText.sense("sampleunit", "【発音】authored-sound、【レベル】1"),
+    ], pos: "Noun")
+    #expect(entry.blocks.contains { $0.role == .partOfSpeech && $0.text == "名詞" })
+    #expect(entry.blocks.contains { $0.role == .meaning && $0.text.contains("自作義A") })
+    #expect(entry.blocks.contains { $0.role == .example && $0.text.contains("自作訳A") })
+    #expect(entry.blocks.contains { $0.role == .note && $0.text.contains("自作注記") })
+    #expect(entry.blocks.contains { $0.role == .metadata && $0.text.contains("authored-sound") })
+    #expect(entry.sections.first?.senses.first?.meaning == "〈自作条件〉自作義A")
+    #expect(entry.sections.first?.senses.first?.examples.first?.contains("自作訳A") == true)
   }
   @Test func metadataCannotBecomeAMeaning() {
     let entry = EijiroText.entry([EijiroText.sense("sampleunit", "【レベル】9、【発音】テスト音")], pos: "Noun")

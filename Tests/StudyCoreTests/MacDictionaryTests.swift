@@ -4,6 +4,43 @@ import Testing
 
 // Independently authored definitions and examples; no system dictionary text is copied.
 struct MacDictionaryTests {
+  @Test func argumentSlotsInAnchoredIdiomsCannotConsumeLiteralSubtitleArticles() {
+    #expect(MacDictionaryMarkup.phraseHeadword("sampleunit at A", anchored: true) == "sampleunit at")
+    #expect(MacDictionaryMarkup.phraseHeadword("sampleunit A for B", anchored: true) == nil)
+    #expect(MacDictionaryMarkup.phraseHeadword("sampleunit a tower", anchored: true) == "sampleunit a tower")
+    #expect(MacDictionaryMarkup.phraseHeadword("authored vitamin B", anchored: false) == "authored vitamin B")
+  }
+  @Test func phraseMissesNeverEvictPositiveRecordsAndPositiveEvictionIsIncremental() {
+    var cache = MacDictionaryRecordCache()
+    let entry = DictionaryEntry(definition: "自作本文", shortGloss: "自作義")
+    cache.store([entry], for: "authoredunit")
+    for index in 0..<9000 { cache.store([], for: "absent phrase \(index)") }
+    #expect(cache.entries(for: "authoredunit")?.first?.definition == "自作本文")
+    #expect(cache.entries(for: "absent phrase 8999")?.isEmpty == true)
+    #expect(cache.entries(for: "absent phrase 0") == nil)
+    for index in 0..<512 { cache.store([entry], for: "word\(index)") }
+    #expect(cache.entries(for: "authoredunit") == nil)
+    #expect(cache.entries(for: "word0")?.count == 1 && cache.entries(for: "word511")?.count == 1)
+  }
+
+  @Test func structuredBodyPreservesSemanticRolesAndAllVisibleContent() throws {
+    let xml = document("""
+    <span class='gramb'><span d:pos='1'>動詞</span><span class='semb'>
+    <span class='sn'>1</span><span class='trg'><span class='trans'>自作義A</span></span>
+    <span class='exg'><span class='ex'>A paper robot turns.</span><span class='ty_用例訳'>紙のロボットが回る。</span></span>
+    </span><span class='box'><span class='title'>自作用法</span><span class='np'>自作用法の本文</span></span>
+    <span class='idmsec'><span class='idm'>sampleunit around</span><span class='trg'>自作句義</span></span>
+    </span>
+    """)
+    let entry = try #require(MacDictionaryMarkup.parse(xml, headword: "sampleunit"))
+    #expect(entry.blocks.contains { $0.role == .partOfSpeech && $0.text == "動詞" })
+    #expect(entry.blocks.contains { $0.role == .meaning && $0.text == "1 自作義A" })
+    #expect(entry.blocks.contains { $0.role == .example && $0.text == "A paper robot turns." })
+    #expect(entry.blocks.contains { $0.role == .translation && $0.text == "紙のロボットが回る。" })
+    #expect(entry.blocks.contains { $0.role == .note && $0.text == "自作用法の本文" })
+    #expect(entry.blocks.contains { $0.role == .phrase && $0.text == "sampleunit around" })
+    #expect(entry.blocks.map(\.text).joined(separator: "\n") == entry.definition)
+  }
   @Test(.enabled(if: ProcessInfo.processInfo.environment["SUBRITZ_TEST_SYSTEM_DICTIONARY"] == "1"),
     arguments: [("like", "Verb", "動詞"), ("like", "Preposition", "前置詞"),
       ("like", "Conjunction", "接続詞"), ("run", "Verb", "動詞"), ("run", "Noun", "名詞"),
@@ -50,7 +87,42 @@ struct MacDictionaryTests {
     #expect(entry.pronunciation == "fictional-sound")
     #expect(entry.sections[0].senses.count == 1)
     #expect(entry.sections[0].senses[0].examples == ["A paper robot sorts blue tiles.\n紙のロボットが青いタイルを整理する。"])
-    #expect(!entry.definition.contains("自作語源") && !entry.shortGloss.contains("紙のロボット"))
+    #expect(entry.definition.contains("自作語源") && !entry.shortGloss.contains("紙のロボット"))
+    #expect(entry.definition.contains("自作注記") && entry.definition.contains("除外する囲み記事"))
+  }
+  @Test func unmarkedSubsensesNotesAndIdiomsRemainInTheCompleteRecord() throws {
+    let senses = (1...12).map { index in
+      "<span class='semb'><span class='sn'>\(index)</span><span class='trg' \(index == 1 ? "d:def='1'" : "")><span class='trans'>自作未省略義\(index)</span></span><span class='exg'><span class='ex'>Robot example \(index).</span><span class='trans ty_用例訳'>自作例文訳\(index)</span></span></span>"
+    }.joined()
+    let body = """
+    <span class='gramb'><span d:pos='1'>動詞</span>
+    <span class='semb'><span class='x_xdh'>他動詞</span>\(senses)</span>
+    <span class='box'><span class='title'>自作用法見出し</span><span class='np'>自作用法本文</span></span>
+    <span class='idmsec' id='authored-idiom'><span class='idm'>sampleunit around</span>
+    <span class='semb'><span class='trg'><span class='trans'>自作熟語義</span></span></span></span>
+    </span>
+    """
+    let entry = try #require(MacDictionaryMarkup.parse(document(body), headword: "sampleunit"))
+    #expect(entry.sections[0].senses.count == 12)
+    for index in 1...12 {
+      #expect(entry.definition.contains("自作未省略義\(index)"))
+      #expect(entry.definition.contains("自作例文訳\(index)"))
+    }
+    #expect(entry.definition.contains("他動詞") && entry.definition.contains("自作用法本文"))
+    #expect(entry.definition.contains("sampleunit around") && entry.definition.contains("自作熟語義"))
+    #expect(!entry.shortGloss.contains("自作用法本文") && !entry.shortGloss.contains("自作熟語義"))
+  }
+  @Test func punctuationBetweenSplitTranslationsAndAllPronunciationVariantsArePreserved() throws {
+    let body = """
+    <span class='gramb'><span d:pos='1'>動詞</span><span class='semb'>
+    <span class='trg'><span class='trans'>自作義A</span><span class='gp'>; </span><span class='trans'>自作義B</span></span>
+    </span></span>
+    """
+    let xml = document(body).replacingOccurrences(of: "<span class=\"etym\">",
+      with: "<span d:prn='2'>alternate-sound</span><span class=\"etym\">")
+    let entry = try #require(MacDictionaryMarkup.parse(xml, headword: "sampleunit"))
+    #expect(entry.sections[0].senses[0].meaning == "自作義A; 自作義B")
+    #expect(entry.pronunciation == "fictional-sound / alternate-sound")
   }
   @Test func partOfSpeechSelectsAcrossHomographsWithoutMixingTheirMeanings() throws {
     let a = try #require(MacDictionaryMarkup.parse(document(group("動詞", ["自作動義A"])), headword: "sampleunit"))
@@ -139,7 +211,7 @@ struct MacDictionaryTests {
     #expect(entry.shortGloss == "自作参照動義、自作句義")
     #expect(entry.sections[0].senses.count == 2)
     #expect(entry.sections[0].senses[0].examples == ["A robot draws paper stars."])
-    #expect(entry.sections[0].senses[1].meaning == "〈自作対象〉自作句義")
+    #expect(entry.sections[0].senses[1].meaning == "〈自作対象〉 自作句義")
     let cycle = xml.replacingOccurrences(of: "@id='own-base'", with: "@id='own-phrase'")
     #expect(MacDictionaryMarkup.parse(cycle, headword: "sampleunit up", anchor: "xpointer(//*[@id='own-phrase'])")?.shortGloss == "自作句義")
   }

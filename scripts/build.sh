@@ -10,13 +10,20 @@ if [[ -d /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ]]; then
  SDK_ARGS=(--sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk)
  ICON_SWIFT_ARGS+=(-sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk)
 fi
+CONFIG_ARGS=(-c release)
+for ARG in "$@"; do
+ if [[ "$ARG" == "-c" || "$ARG" == "--configuration" || "$ARG" == --configuration=* ]]; then
+  CONFIG_ARGS=()
+  break
+ fi
+done
 ICON_SOURCE="$PWD/scripts/Assets/AppIconSource.png"
 ICON_OUTPUT="$PWD/scripts/Resources/AppIcon.icns"
 if [[ ! -f "$ICON_OUTPUT" || "$ICON_SOURCE" -nt "$ICON_OUTPUT" || "$PWD/scripts/make-app-icon.swift" -nt "$ICON_OUTPUT" ]]; then
  swift "${ICON_SWIFT_ARGS[@]}" "$PWD/scripts/make-app-icon.swift" "$ICON_SOURCE" "$ICON_OUTPUT" "$PWD/scripts/Assets/AppIcon.png"
 fi
-swift build --disable-sandbox --build-system native "${SDK_ARGS[@]}" "$@"
-BIN_DIR=$(swift build --disable-sandbox --build-system native "${SDK_ARGS[@]}" "$@" --show-bin-path)
+swift build --disable-sandbox --build-system native "${SDK_ARGS[@]}" "${CONFIG_ARGS[@]}" "$@"
+BIN_DIR=$(swift build --disable-sandbox --build-system native "${SDK_ARGS[@]}" "${CONFIG_ARGS[@]}" "$@" --show-bin-path)
 APP="${SUBRITZ_APP_PATH:-$PWD/dist/Subritz.app}"
 if [[ "$APP" == "$PWD/dist/Subritz.app" && -d "$PWD/dist/YouTubeEnglishStudy.app" && ! -d "$APP" ]]; then
  mv "$PWD/dist/YouTubeEnglishStudy.app" "$APP"

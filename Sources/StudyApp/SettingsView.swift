@@ -44,6 +44,8 @@ struct SettingsView: View {
             .font(.caption).foregroundStyle(.secondary)
         }
         Section("辞書") {
+          Toggle("リアルタイム辞書に発音記号を表示する",
+            isOn: $model.settings.realtimePronunciationEnabled).toggleStyle(.checkbox)
           LabeledContent("辞書を開く際のブラウザ") {
             DictionaryBrowserPicker(selection: $model.settings.dictionaryBrowser,
               applications: dictionaryBrowsers)

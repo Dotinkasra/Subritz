@@ -4,6 +4,30 @@ import Foundation
 
 // DictionaryServices' public API supplies plain text from the first active dictionary.
 // Isolate optional, undocumented record access here; never alter the user's dictionary order.
+// Positive definitions and phrase misses have independent bounded caches.
+struct MacDictionaryRecordCache {
+  private var words: [String: [DictionaryEntry]] = [:]
+  private var wordOrder: [String] = []
+  private var misses = Set<String>()
+  private var missOrder: [String] = []
+  func entries(for key: String) -> [DictionaryEntry]? {
+    words[key] ?? (misses.contains(key) ? [] : nil)
+  }
+  mutating func store(_ entries: [DictionaryEntry], for key: String) {
+    if entries.isEmpty {
+      guard misses.insert(key).inserted else { return }
+      if missOrder.count >= 8192 { misses.remove(missOrder.removeFirst()) }
+      missOrder.append(key)
+    } else {
+      if words[key] == nil {
+        if wordOrder.count >= 512 { words.removeValue(forKey: wordOrder.removeFirst()) }
+        wordOrder.append(key)
+      }
+      words[key] = entries
+    }
+  }
+}
+
 final class MacDictionaryRuntime {
   typealias CopyAvailable = @convention(c) () -> Unmanaged<CFTypeRef>?
   typealias GetString = @convention(c) (CFTypeRef) -> Unmanaged<CFString>?
@@ -16,7 +40,7 @@ final class MacDictionaryRuntime {
   let headword: GetString
   let anchor: GetString
   private var dictionary: CFTypeRef?
-  private var cache: [String: [DictionaryEntry]] = [:]
+  private var cache = MacDictionaryRecordCache()
 
   init?() {
     guard let handle = dlopen(
@@ -52,27 +76,32 @@ final class MacDictionaryRuntime {
     return dictionary
   }
   func lookup(_ word: String, pos: String?) -> DictionaryEntry? {
-    if let cached = cache[word] { return MacDictionaryMarkup.combine(cached, pos: pos) }
+    let key = DictionaryText.normalize(word)
+    if let cached = cache.entries(for: key) { return MacDictionaryMarkup.combine(cached, pos: pos) }
     guard let dictionary = englishJapaneseDictionary(),
       let value = records(dictionary, word as CFString, 0, 32)?.takeRetainedValue(),
       CFGetTypeID(value) == CFArrayGetTypeID() else { return nil }
     var entries: [DictionaryEntry] = []
     for record in value as! [AnyObject] {
-      guard let title = headword(record)?.takeUnretainedValue() as String?,
-        let raw = data(record)?.takeRetainedValue(), CFGetTypeID(raw) == CFStringGetTypeID()
-      else { continue }
+      guard !Task.isCancelled else { return nil }
+      guard let title = headword(record)?.takeUnretainedValue() as String? else { continue }
+      let pointer = anchor(record)?.takeUnretainedValue() as String?
       // A search can also return suffixes, spelling variants, or partial word matches.
-      if word.contains(" ") && DictionaryText.normalize(title) != DictionaryText.normalize(word) {
+      if word.contains(" ") && MacDictionaryMarkup.phraseHeadword(title, anchored: pointer?.isEmpty == false)
+        .map(DictionaryText.normalize) != DictionaryText.normalize(word) {
         continue
       }
       if !word.contains(" ") && title.hasPrefix("-") && !word.hasPrefix("-") { continue }
-      let pointer = anchor(record)?.takeUnretainedValue() as String?
+      // Reject partial phrase hits before copying a potentially huge parent record.
+      guard let raw = data(record)?.takeRetainedValue(), CFGetTypeID(raw) == CFStringGetTypeID()
+      else { continue }
       if let entry = MacDictionaryMarkup.parse(raw as! String, headword: title, anchor: pointer) {
         entries.append(entry)
       }
     }
-    if cache.count >= 512 { cache.removeAll() }
-    cache[word] = entries
+    // A completely parsed result remains useful if its hover was cancelled at
+    // the last record. The caller still discards that obsolete UI update.
+    cache.store(entries, for: key)
     return MacDictionaryMarkup.combine(entries, pos: pos)
   }
 }
@@ -100,10 +129,36 @@ enum MacDictionaryAccess {
   }
 }
 
+// Serialize DictionaryServices without blocking many cooperative-pool threads
+// on NSLock. A cancelled hover/prefetch is discarded before its record is read.
+private actor MacDictionaryWorker {
+  static let shared = MacDictionaryWorker()
+  func entry(for word: String, pos: String? = nil) -> DictionaryEntry? {
+    guard !Task.isCancelled else { return nil }
+    return MacDictionaryAccess.entry(for: word, pos: pos)
+  }
+}
+
+extension MacDictionaryAccess {
+  static func lookup(for word: String, pos: String? = nil) async -> DictionaryEntry? {
+    await MacDictionaryWorker.shared.entry(for: word, pos: pos)
+  }
+}
+
 enum MacDictionaryMarkup {
   static let namespace = "http://www.apple.com/DTDs/DictionaryService-1.0.rng"
   static let excludedScopes: Set<String> = ["exg", "box", "np", "idmsec", "drvsec", "csec"]
-  static let noteClasses: Set<String> = ["xrg", "grnote", "lbl", "con", "fld", "ph", "pr", "sn", "rf"]
+  static let noteClasses: Set<String> = ["xrg", "grnote", "lbl", "con", "fld", "ph", "pr", "sn", "rf", "ind", "exg", "ty_用例訳"]
+  static func phraseHeadword(_ title: String, anchored: Bool) -> String? {
+    guard anchored else { return title }
+    // WISDOM's A/B/C slots are arguments, not literal articles in the subtitle.
+    // "look at A" recognizes "look at", never the three-word "look at a".
+    var words = title.split(separator: " ").map(String.init)
+    let slots: Set<String> = ["A", "B", "C"]
+    while let last = words.last, slots.contains(last) { words.removeLast() }
+    guard words.count >= 2, !words.contains(where: { slots.contains($0) }) else { return nil }
+    return words.joined(separator: " ")
+  }
 
   static func parse(_ markup: String, headword: String, anchor: String? = nil) -> DictionaryEntry? {
     guard let doc = try? XMLDocument(xmlString: markup, options: [.nodeLoadExternalEntitiesNever]),
@@ -136,16 +191,29 @@ enum MacDictionaryMarkup {
       }
     }
     guard !sections.isEmpty else { return nil }
-    let pronunciation = entry.allElements.first(where: { $0.semantic("prn") != nil })?.stringValue
-    return makeEntry(headword: headword, pronunciation: pronunciation, sections: sections, pos: nil)
+    let header = scope === entry ? entry.allElements.first(where: { $0.hasClass("hwg") }) : scope
+    var seenPronunciations = Set<String>()
+    let pronunciations = (header?.allElements ?? []).filter { $0.semantic("prn") != nil }
+      .compactMap { $0.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty && seenPronunciations.insert($0).inserted }
+    let blocks = structuredBlocks(scope)
+    var parsed = makeEntry(headword: headword,
+      pronunciation: pronunciations.isEmpty ? nil : pronunciations.joined(separator: " / "),
+      sections: sections, pos: nil, definition: blocks.map(\.text).joined(separator: "\n"))
+    parsed.blocks = blocks
+    return parsed
   }
   static func combine(_ entries: [DictionaryEntry], pos: String?) -> DictionaryEntry? {
     guard let first = entries.first else { return nil }
     let sections = entries.flatMap(\.sections)
-    return makeEntry(headword: first.headword ?? "", pronunciation: first.pronunciation,
-      sections: sections, pos: pos)
+    var combined = makeEntry(headword: first.headword ?? "", pronunciation: first.pronunciation,
+      sections: sections, pos: pos,
+      definition: entries.count == 1 ? first.definition : entries.map(\.definition).joined(separator: "\n\n"))
+    combined.blocks = entries.flatMap(\.blocks)
+    return combined
   }
-  static func makeEntry(headword: String, pronunciation: String?, sections: [DictionarySection], pos: String?) -> DictionaryEntry {
+  static func makeEntry(headword: String, pronunciation: String?, sections: [DictionarySection], pos: String?,
+    definition fullDefinition: String? = nil) -> DictionaryEntry {
     let wanted: Set<String>
     switch pos {
     case "Noun": wanted = ["名詞"]
@@ -166,11 +234,17 @@ enum MacDictionaryMarkup {
     // Keep that fallback separate so a matching lemma can still take priority.
     let gloss = selected.flatMap(\.senses).prefix(3).map { $0.shortMeaning ?? $0.meaning }
       .joined(separator: "、")
-    let definition = sections.map { section in
-      section.partOfSpeech + "\n" + section.senses.enumerated().map { index, sense in
-        "\(index + 1). " + sense.meaning + (sense.examples.isEmpty ? "" : "\n" + sense.examples.joined(separator: "\n"))
-      }.joined(separator: "\n")
-    }.joined(separator: "\n\n")
+    let definition: String
+    if let fullDefinition { definition = fullDefinition }
+    else {
+      definition = sections.map { section in
+        let senses = section.senses.enumerated().map { index, sense -> String in
+          let examples = sense.examples.isEmpty ? "" : "\n" + sense.examples.joined(separator: "\n")
+          return "\(index + 1). " + sense.meaning + examples
+        }.joined(separator: "\n")
+        return section.partOfSpeech + "\n" + senses
+      }.joined(separator: "\n\n")
+    }
     return DictionaryEntry(definition: definition,
       shortGloss: gloss.isEmpty ? "この品詞の日本語語義はありません" : gloss,
       headword: headword, partOfSpeech: selected.first?.partOfSpeech,
@@ -196,20 +270,16 @@ enum MacDictionaryMarkup {
     let phrase = scope.hasClass("idmsec") || scope.ancestors.contains(where: { $0.hasClass("idmsec") })
     let forbidden = phrase ? excludedScopes.subtracting(["idmsec"]) : excludedScopes
     let definitions = scope.allElements.filter {
-      (phrase ? $0.hasClass("trg") : $0.semantic("def") != nil)
+      // d:def marks priority/search summaries, not the complete set of senses.
+      ($0.hasClass("trg") || ($0.semantic("def") != nil
+        && !$0.allElements.dropFirst().contains(where: { $0.hasClass("trg") })))
         && !$0.ancestors(until: scope).contains(where: { !$0.classes.isDisjoint(with: forbidden) })
         && !$0.ancestors(until: scope).contains(where: { $0.hasClass("trg") })
     }
     return definitions.flatMap { definition -> [DictionarySense] in
-      let translations = definition.allElements.filter {
-        $0.hasClass("trans") && !$0.hasClass("ty_用例訳")
-          && !$0.ancestors(until: definition).contains(where: {
-            $0.hasClass("trans") || !$0.classes.isDisjoint(with: noteClasses)
-          })
-      }
-      // Multiple trans nodes may be the subject constraint and predicate of ONE
-      // meaning. The definition/sense container, not each trans node, is the unit.
-      let meaning = translations.map(meaningText).filter { !$0.isEmpty }.joined()
+      // Preserve inline punctuation between translations. Notes and examples are
+      // omitted only here, when producing a compact gloss, never from full text.
+      let meaning = meaningText(definition)
       if hasJapanese(meaning) {
         return [DictionarySense(meaning: meaning, examples: examples(near: definition, limit: scope),
           shortMeaning: shortMeaning(meaning))]
@@ -226,6 +296,56 @@ enum MacDictionaryMarkup {
         return senses(in: target, entry: entry, visited: visited.union([id]))
       }
     }
+  }
+  static func fullText(_ scope: XMLElement) -> String {
+    structuredBlocks(scope).map(\.text).joined(separator: "\n")
+  }
+  static func structuredBlocks(_ scope: XMLElement) -> [DictionaryBlock] {
+    // Preserve every visible text node while retaining the dictionary's own
+    // semantic hierarchy, including notes and idioms outside summary senses.
+    let boundaries: Set<String> = ["hwg", "gramb", "semb", "box", "np", "idmsec", "drvsec",
+      "csec", "cb", "title", "x_xdh", "etym", "exg", "ex", "ty_用例訳", "idm", "drv"]
+    var blocks: [DictionaryBlock] = []
+    var buffer = ""
+    var kind: DictionaryBlock.Role = .body
+    func flush() {
+      let text = buffer.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      if !text.isEmpty { blocks.append(DictionaryBlock(text, role: kind)) }
+      buffer = ""
+    }
+    func visit(_ node: XMLNode, role inherited: DictionaryBlock.Role) {
+      guard let element = node as? XMLElement else {
+        if node.kind == .text, let text = node.stringValue {
+          if buffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { kind = inherited }
+          buffer += text
+        }
+        return
+      }
+      if ["script", "style"].contains(element.localName ?? "") { return }
+      if element.localName == "br" { flush(); return }
+      let classes = element.classes
+      let boundary = !classes.isDisjoint(with: boundaries)
+      if boundary { flush() }
+      let role: DictionaryBlock.Role
+      if classes.contains("hwg") { role = .metadata }
+      else if classes.contains("x_xdh") || element.semantic("pos") != nil { role = .partOfSpeech }
+      else if classes.contains("idm") || classes.contains("drv") { role = .phrase }
+      else if classes.contains("ty_用例訳") { role = .translation }
+      else if classes.contains("exg") || classes.contains("ex") { role = .example }
+      else if classes.contains("box") || classes.contains("np") || classes.contains("etym")
+        || classes.contains("grnote") || classes.contains("title") { role = .note }
+      else if classes.contains("trg") || element.semantic("def") != nil { role = .meaning }
+      else { role = inherited }
+      // Sense numbers precede their meaning in the same paragraph.
+      if role == .meaning, kind == .body { kind = .meaning }
+      for child in element.children ?? [] { visit(child, role: role) }
+      if classes.contains("sn") { buffer += " " }
+      if boundary { flush() }
+    }
+    visit(scope, role: .body)
+    flush()
+    return blocks
   }
   static func meaningText(_ node: XMLElement) -> String {
     func render(_ node: XMLNode) -> String {

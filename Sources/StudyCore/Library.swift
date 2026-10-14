@@ -16,6 +16,8 @@ public struct FavoriteWord: Codable, Identifiable {
   public var partOfSpeech: String?
   public var shortGloss: String
   public var definition: String
+  public var pronunciation: String? = nil
+  public var dictionaryBlocks: [DictionaryBlock]? = nil
   public var sourceVideo: Video?
   public var sourceTime: Double
   public var savedAt: Date
@@ -26,6 +28,8 @@ public struct FavoriteWord: Codable, Identifiable {
     partOfSpeech = entry?.partOfSpeech ?? token.partOfSpeech
     shortGloss = entry?.shortGloss ?? ""
     definition = entry?.definition ?? ""
+    pronunciation = entry?.pronunciation
+    dictionaryBlocks = entry?.blocks
     sourceVideo = video
     sourceTime = token.startTime
     self.savedAt = savedAt

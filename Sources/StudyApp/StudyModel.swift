@@ -92,7 +92,14 @@ import SwiftUI
   var backgroundTask: Task<Void, Never>?
   var backgroundRunning = false
   var dictionaryTask: Task<Void, Never>?
+  var hoverExitTask: Task<Void, Never>?
   var dictionaryPrefetchTask: Task<Void, Never>?
+  var dictionaryPrefetchCenter: UUID?
+  var dictionaryProviderOverride: (any DictionaryProvider)?
+  var dictionaryProvider: any DictionaryProvider {
+    dictionaryProviderOverride ?? (settings.dictionary == "eijiro" && eijiro != nil
+      ? eijiro! as any DictionaryProvider : MacDictionaryProvider())
+  }
   var dictionaryMisses = Set<String>()
   var dictionaryCache: [String: DictionaryEntry] = [:]
   var selectedDictionaryID: UUID?
@@ -131,6 +138,7 @@ import SwiftUI
     scheduler = nil
     dictionaryTask?.cancel()
     dictionaryPrefetchTask?.cancel()
+    dictionaryPrefetchCenter = nil
     bridge.pause()
     session = UUID()
     resetSubtitleSearchForVideo()
@@ -491,6 +499,19 @@ import SwiftUI
   func hover(_ token: Token?, exiting: UUID? = nil) {
     guard !dictionaryIsPinned else { return }
     if let exiting, hoverToken?.id != exiting { return }
+    hoverExitTask?.cancel()
+    if token == nil, let exiting {
+      let sid = session
+      hoverExitTask = Task {
+        // Coalesce adjacent exit/enter events, without delaying word entry.
+        await Task.yield()
+        guard !Task.isCancelled, sid == session, !dictionaryIsPinned,
+          hoverToken?.id == exiting else { return }
+        hoverToken = nil
+        lookup()
+      }
+      return
+    }
     hoverToken = token
     lookup()
   }
@@ -545,29 +566,47 @@ import SwiftUI
       + (token.lemma ?? "")
   }
   func prefetchDictionary(at time: Double) {
+    prefetchDictionary(nearLine: timeline?.line(at: time)?.id)
+  }
+  func prefetchDictionary(nearLine id: UUID?) {
+    guard let id, let lines = timeline?.lines,
+      let center = lines.firstIndex(where: { $0.id == id }) else { return }
+    if dictionaryPrefetchCenter == id, dictionaryPrefetchTask?.isCancelled == false { return }
+    dictionaryPrefetchCenter = id
     dictionaryPrefetchTask?.cancel()
-    let tokens = timeline?.upcomingWords(at: time, limit: 10) ?? []
+    // Warm the words users can actually point at, including the previous line.
+    let nearby = [center] + [center - 1, center + 1].filter { lines.indices.contains($0) }
+    var seen = Set<String>()
+    let tokens = nearby.flatMap { lines[$0].tokens }.filter {
+      $0.lexical && seen.insert(dictionaryKey($0)).inserted
+    }
     let allTokens = timeline?.tokens ?? []
     let sid = session
-    let provider: any DictionaryProvider =
-      settings.dictionary == "eijiro" && eijiro != nil ? eijiro! : MacDictionaryProvider()
-    dictionaryPrefetchTask = Task {
-      let anchors = tokens.filter { expressionCache[$0.id] == nil && !expressionMisses.contains($0.id) }
-      let matches = await DictionaryExpressions.matches(anchors: anchors, in: allTokens, provider: provider)
-      guard !Task.isCancelled, sid == session else { return }
-      for anchor in anchors {
-        if let match = matches[anchor.id] { expressionCache[anchor.id] = match }
-        else { expressionMisses.insert(anchor.id) }
-      }
+    let provider = dictionaryProvider
+    dictionaryPrefetchTask = Task(priority: .utility) {
+      // Single words must never queue behind exhaustive expression matching.
       for token in tokens {
         guard !Task.isCancelled, sid == session else { return }
         let key = dictionaryKey(token)
         if dictionaryCache[key] != nil || dictionaryMisses.contains(key) { continue }
         let entry = await provider.lookup(token)
         guard !Task.isCancelled, sid == session else { return }
-        if let entry { dictionaryCache[key] = entry } else { dictionaryMisses.insert(key) }
+        if let entry { cacheDictionaryEntry(entry, key: key) } else { dictionaryMisses.insert(key) }
+      }
+      for anchor in tokens {
+        guard !Task.isCancelled, sid == session else { return }
+        if expressionCache[anchor.id] != nil || expressionMisses.contains(anchor.id) { continue }
+        let matches = await DictionaryExpressions.matches(anchors: [anchor], in: allTokens, provider: provider)
+        guard !Task.isCancelled, sid == session else { return }
+        if let match = matches[anchor.id] { expressionCache[anchor.id] = match }
+        else { expressionMisses.insert(anchor.id) }
       }
     }
+  }
+  func cacheDictionaryEntry(_ entry: DictionaryEntry, key: String) {
+    if dictionaryCache.count >= 2000, dictionaryCache[key] == nil,
+      let oldest = dictionaryCache.keys.first { dictionaryCache.removeValue(forKey: oldest) }
+    dictionaryCache[key] = entry
   }
   func lookup() {
     let token = dictionaryQueryToken
@@ -588,44 +627,40 @@ import SwiftUI
     let key = dictionaryKey(token)
     let requiresPhraseLookup = explicit != nil || (automatic && !expressionMisses.contains(token.id))
     if dictionaryMisses.contains(key), !requiresPhraseLookup { return }
-    if let entry = dictionaryCache[key] {
-      dictionaryLoading = false
+    if let entry = dictionaryCache[key], explicit == nil {
       dictionaryEntry = entry
-      if explicit != nil || !requiresPhraseLookup { return }
+      if !requiresPhraseLookup { return }
     }
     let sid = session
-    let provider: any DictionaryProvider =
-      settings.dictionary == "eijiro" && eijiro != nil ? eijiro! : MacDictionaryProvider()
+    let provider = dictionaryProvider
     let allTokens = timeline?.tokens ?? []
     dictionaryLoading = dictionaryEntry == nil
-    dictionaryTask = Task {
-      let entry: DictionaryEntry?
-      var match: DictionaryExpressionMatch?
+    dictionaryTask = Task(priority: .userInitiated) {
       if let explicit {
-        entry = await provider.lookupExpressions([explicit.tokens]).first ?? nil
-      } else {
-        if automatic, !expressionMisses.contains(token.id) {
-          match = await DictionaryExpressions.matches(anchors: [token], in: allTokens, provider: provider)[token.id]
-        }
-        if let cached = match?.entry ?? dictionaryCache[key] { entry = cached }
-        else { entry = await provider.lookup(token) }
+        let entry = await provider.lookupExpressions([explicit.tokens]).first ?? nil
+        guard !Task.isCancelled, sid == session, dictionaryQueryToken?.id == token.id else { return }
+        dictionaryEntry = entry
+        dictionaryLoading = false
+        return
       }
+      let entry: DictionaryEntry?
+      if let cached = dictionaryCache[key] { entry = cached }
+      else if dictionaryMisses.contains(key) { entry = nil }
+      else { entry = await provider.lookup(token) }
       guard !Task.isCancelled, sid == session, dictionaryQueryToken?.id == token.id else { return }
-      StudyLog.dictionary.debug("Updated dictionary token")
-      dictionaryLoading = false
+      // Publish the word immediately; compound recognition is a later enrichment.
       dictionaryEntry = entry
+      dictionaryLoading = false
+      if let entry { cacheDictionaryEntry(entry, key: key) }
+      else { dictionaryMisses.insert(key) }
+      guard automatic, requiresPhraseLookup else { return }
+      let match = await DictionaryExpressions.matches(anchors: [token], in: allTokens, provider: provider)[token.id]
+      guard !Task.isCancelled, sid == session, dictionaryQueryToken?.id == token.id else { return }
       if let match {
         resolvedExpression = match.expression
+        dictionaryEntry = match.entry
         expressionCache[token.id] = match
-      } else if automatic {
-        expressionMisses.insert(token.id)
-      }
-      if match == nil, let entry {
-        if dictionaryCache.count > 2000 { dictionaryCache.removeAll() }
-        dictionaryCache[key] = entry
-      } else if entry == nil {
-        dictionaryMisses.insert(key)
-      }
+      } else { expressionMisses.insert(token.id) }
     }
   }
   func closeVideo() {
@@ -637,6 +672,7 @@ import SwiftUI
     backgroundTask?.cancel()
     dictionaryTask?.cancel()
     dictionaryPrefetchTask?.cancel()
+    dictionaryPrefetchCenter = nil
     bridge.pause()
     bridge.stopClock()
     bridge.invalidateVideo()
@@ -731,11 +767,13 @@ import SwiftUI
   func invalidateDictionary() {
     dictionaryTask?.cancel()
     dictionaryPrefetchTask?.cancel()
+    dictionaryPrefetchCenter = nil
     dictionaryCache.removeAll()
     dictionaryMisses.removeAll()
     expressionCache.removeAll()
     expressionMisses.removeAll()
     selectedDictionaryID = nil
+    prefetchDictionary(at: time)
     lookup()
   }
   func changeCacheDirectory(to directory: URL?) {

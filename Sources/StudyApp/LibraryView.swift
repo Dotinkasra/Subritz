@@ -287,6 +287,7 @@ struct FavoriteDefinitionView: View {
             .foregroundStyle(.orange).disabled(model.pendingFavoriteIDs.contains(word.id))
             .help("お気に入りを解除")
         }
+        DictionaryPronunciation(value: word.pronunciation ?? DictionaryText.pronunciation(word.definition))
         if let partOfSpeech = word.partOfSpeech {
           Text(DictionaryPane(model: model).pos(partOfSpeech)).foregroundStyle(.secondary)
         }
@@ -311,16 +312,14 @@ struct FavoriteDefinitionView: View {
         }
         if !word.definition.isEmpty {
           Divider()
-          MaskedDictionaryContent(revealed: meaningVisible, onReveal: { meaningVisible = true }) {
-            VStack(alignment: .leading, spacing: 20) {
-              ForEach(Array(DictionaryText.paragraphs(word.definition).enumerated()), id: \.offset) { _, paragraph in
-                Text(paragraph).font(.body).lineSpacing(5).textSelection(.enabled)
-              }
-            }.frame(maxWidth: .infinity, alignment: .leading)
+          MaskedDictionaryContent(revealed: meaningVisible, onReveal: { meaningVisible = true }, maskedHeight: 120) {
+            DictionaryBodyText(text: word.definition, blocks: word.dictionaryBlocks ?? [],
+              fontSize: NSFont.systemFontSize, lineSpacing: 5)
+              .frame(maxWidth: .infinity, alignment: .leading)
           }
         }
         Text("登録時の辞書表示を保存しています").font(.caption).foregroundStyle(.secondary)
-      }.frame(maxWidth: .infinity, alignment: .leading).padding(24)
+      }.frame(maxWidth: .infinity, alignment: .leading).padding(24).textSelection(.enabled)
     }
   }
 }
@@ -328,10 +327,12 @@ struct FavoriteDefinitionView: View {
 struct MaskedDictionaryContent<Content: View>: View {
   let revealed: Bool
   let onReveal: () -> Void
+  var maskedHeight: CGFloat? = nil
   @ViewBuilder let content: () -> Content
   var body: some View {
     Group {
       if revealed { content() }
+      else if let maskedHeight { Color.clear.frame(height: maskedHeight) }
       else { content().hidden().allowsHitTesting(false).accessibilityHidden(true) }
     }.overlay {
       if !revealed {

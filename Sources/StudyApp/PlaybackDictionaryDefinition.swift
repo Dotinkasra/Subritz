@@ -13,8 +13,15 @@ struct PlaybackDictionaryDefinition: View {
   let entry: DictionaryEntry
   let detailed: Bool
   let initiallyMasked: Bool
+  var initiallyExpanded: Bool = true
   @State private var meaningVisible = false
+  @State private var fullDefinitionExpanded: Bool?
   var revealed: Bool { !initiallyMasked || meaningVisible }
+  var primaryGloss: String {
+    let section = entry.sections.first(where: { $0.partOfSpeech == entry.partOfSpeech })
+      ?? entry.sections.first
+    return section?.senses.first?.shortMeaning ?? entry.shortGloss
+  }
   var body: some View {
     VStack(alignment: .leading, spacing: 22) {
       VStack(alignment: .leading, spacing: 10) {
@@ -28,50 +35,63 @@ struct PlaybackDictionaryDefinition: View {
           }
         }
         MaskedDictionaryContent(revealed: revealed, onReveal: { meaningVisible = true }) {
-          Text(entry.shortGloss).font(.system(size: 30, weight: .medium)).lineSpacing(8)
+          Text(primaryGloss).font(.system(size: 28, weight: .medium)).lineSpacing(6)
             .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
       }
       if detailed {
         Divider()
-        MaskedDictionaryContent(revealed: revealed, onReveal: { meaningVisible = true }) {
-          VStack(alignment: .leading, spacing: 14) {
-            Text("詳細定義").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            if !entry.sections.isEmpty {
-              if let pronunciation = entry.pronunciation, !pronunciation.isEmpty {
-                Text(pronunciation).font(.system(size: 17)).foregroundStyle(.secondary)
-                  .textSelection(.enabled)
-              }
-              ForEach(Array(entry.sections.enumerated()), id: \.offset) { _, section in
-                VStack(alignment: .leading, spacing: 14) {
-                  Text(section.partOfSpeech).font(.headline).foregroundStyle(.secondary)
-                  ForEach(Array(section.senses.enumerated()), id: \.offset) { index, sense in
-                    VStack(alignment: .leading, spacing: 8) {
-                      Text("\(index + 1). " + sense.meaning).font(.system(size: 21, weight: .medium))
-                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                      ForEach(Array(sense.examples.enumerated()), id: \.offset) { _, example in
-                        Text(example).font(.system(size: 16)).foregroundStyle(.secondary)
-                          .lineSpacing(5).fixedSize(horizontal: false, vertical: true)
-                          .textSelection(.enabled)
-                      }
+        if !initiallyExpanded, let section = entry.sections.first(where: { $0.partOfSpeech == entry.partOfSpeech })
+          ?? entry.sections.first {
+          MaskedDictionaryContent(revealed: revealed, onReveal: { meaningVisible = true }, maskedHeight: 100) {
+            VStack(alignment: .leading, spacing: 18) {
+              Text("語義と例文").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+              ForEach(Array(section.senses.prefix(3).enumerated()), id: \.offset) { index, sense in
+                HStack(alignment: .top, spacing: 12) {
+                  Text("\(index + 1)").font(.callout.weight(.bold)).foregroundStyle(Color.accentColor)
+                    .frame(width: 22, alignment: .leading)
+                  VStack(alignment: .leading, spacing: 6) {
+                    Text(sense.meaning).font(.system(size: 18, weight: .medium))
+                    if let example = sense.examples.first {
+                      Text(example).font(.system(size: 15)).foregroundStyle(.secondary).lineSpacing(4)
                     }
                   }
-                }.lineSpacing(7).padding(.vertical, 6)
+                }.padding(12)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
               }
-            } else {
-              ForEach(
-                Array(DictionaryText.paragraphs(entry.definition).enumerated()), id: \.offset
-              ) { _, paragraph in
-                Text(paragraph).font(.system(size: 19)).lineSpacing(7)
-                  .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-              }
+            }.textSelection(.enabled)
+          }
+        }
+        DisclosureGroup(isExpanded: Binding(
+          get: { fullDefinitionExpanded ?? initiallyExpanded },
+          set: { fullDefinitionExpanded = $0 })) {
+          if fullDefinitionExpanded ?? initiallyExpanded {
+            MaskedDictionaryContent(revealed: revealed, onReveal: { meaningVisible = true }, maskedHeight: 120) {
+              DictionaryBodyText(text: entry.definition, blocks: entry.blocks)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 12)
             }
-          }.frame(maxWidth: .infinity, alignment: .leading)
+          }
+        } label: {
+          Text("すべての語義・例文・用法").font(.callout.weight(.semibold))
         }
       }
     }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
       .background(
         Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+  }
+}
+
+struct DictionaryPronunciation: View {
+  let value: String?
+  var size: CGFloat = 26
+  var body: some View {
+    if let value, !value.isEmpty {
+      Text(value).font(.system(size: size, weight: .medium))
+        .foregroundStyle(.primary.opacity(0.85)).textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityLabel("発音記号：" + value)
+    }
   }
 }
