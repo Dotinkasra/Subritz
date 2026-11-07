@@ -10,11 +10,12 @@ import SwiftUI
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     if terminating { return .terminateLater }
     guard let model else { return .terminateNow }
-    guard !model.hasOpenVideo || confirmVideoExit(quitting: true) else { return .terminateCancel }
+    guard !model.hasOpenVideo || confirmVideoExit(quitting: true, liveSpeech: model.isLiveSpeech) else { return .terminateCancel }
     model.flushAPIKey()
     model.closeVideo()
     terminating = true
     Task {
+      await model.liveSpeechShutdown?.value
       await model.libraryOperation?.value
       var shouldQuit = true
       if let error = model.libraryError {
@@ -27,6 +28,7 @@ import SwiftUI
         shouldQuit = alert.runModal() == .alertSecondButtonReturn
       }
       terminating = false
+      if shouldQuit { model.clearLiveSpeechCacheOnExit() }
       sender.reply(toApplicationShouldTerminate: shouldQuit)
     }
     return .terminateLater
@@ -47,13 +49,18 @@ import SwiftUI
   }
 }
 
-@MainActor func confirmVideoExit(quitting: Bool) -> Bool {
+@MainActor func confirmVideoExit(quitting: Bool, liveSpeech: Bool = false) -> Bool {
   let alert = NSAlert()
   alert.alertStyle = .warning
-  alert.messageText = quitting ? "動画を閉じてSubritzを終了しますか？" : "本当に動画を閉じますか？"
-  alert.informativeText = "動画が読み込まれています。字幕の解析と再生を終了します。保存済みのキャッシュは残ります。"
+  alert.messageText = liveSpeech
+    ? (quitting ? "音声認識を閉じてSubritzを終了しますか？" : "音声認識を閉じますか？")
+    : (quitting ? "動画を閉じてSubritzを終了しますか？" : "本当に動画を閉じますか？")
+  alert.informativeText = liveSpeech
+    ? (quitting ? "音声の取得を終了し、認識した英文のキャッシュを削除します。お気に入りに登録した単語は残ります。"
+      : "音声の取得を終了します。認識した英文はアプリ終了までキャッシュに残ります。")
+    : "動画が読み込まれています。字幕の解析と再生を終了します。保存済みのキャッシュは残ります。"
   alert.addButton(withTitle: "キャンセル")
-  alert.addButton(withTitle: quitting ? "終了" : "動画を閉じる")
+  alert.addButton(withTitle: quitting ? "終了" : liveSpeech ? "音声認識を閉じる" : "動画を閉じる")
   return alert.runModal() == .alertSecondButtonReturn
 }
 
@@ -129,7 +136,7 @@ struct MainWindowLifecycle: NSViewRepresentable {
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
       if let model, model.hasOpenVideo {
-        guard confirmVideoExit(quitting: false) else { return false }
+        guard confirmVideoExit(quitting: false, liveSpeech: model.isLiveSpeech) else { return false }
         model.closeVideo()
       }
       return originalDelegate?.windowShouldClose?(sender) ?? true

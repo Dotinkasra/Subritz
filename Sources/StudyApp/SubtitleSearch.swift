@@ -40,6 +40,15 @@ extension StudyModel {
     // belong to one video's caption text. Never reuse offsets for another video.
     subtitleSearchIndex = nil
   }
+  func refreshLiveSubtitleSearch() {
+    let selected = currentSubtitleSearchMatch?.id
+    subtitleSearchIndex = nil
+    guard subtitleSearchVisible else { return }
+    refreshSubtitleSearch()
+    if let selected, let index = subtitleSearchResults.matches.firstIndex(where: { $0.id == selected }) {
+      subtitleSearchSelection = index
+    }
+  }
 }
 
 // Use the native search-field editor so Return and Shift-Return work while

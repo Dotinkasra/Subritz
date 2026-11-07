@@ -13,5 +13,8 @@
 <key>CFBundleDevelopmentRegion</key><string>en</string>
 <key>CFBundleLocalizations</key><array><string>en</string><string>ja</string></array>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSMicrophoneUsageDescription</key><string>選択したマイクの英語を端末内で認識し、字幕として表示します。音声は保存しません。</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>英語の音声を端末内で認識し、字幕と辞書に表示します。</string>
+<key>NSAudioCaptureUsageDescription</key><string>Macで再生中の英語を端末内で認識し、字幕として表示します。音声は保存しません。</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict></plist>

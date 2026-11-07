@@ -1,2 +1,5 @@
 "CFBundleDisplayName" = "Subritz";
 "CFBundleName" = "Subritz";
+"NSMicrophoneUsageDescription" = "選択したマイクの英語を端末内で認識し、字幕として表示します。音声は保存しません。";
+"NSSpeechRecognitionUsageDescription" = "英語の音声を端末内で認識し、字幕と辞書に表示します。";
+"NSAudioCaptureUsageDescription" = "Macで再生中の英語を端末内で認識し、字幕として表示します。音声は保存しません。";

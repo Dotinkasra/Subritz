@@ -16,6 +16,7 @@ struct SettingsView: View {
           TextField("yt-dlp 実行ファイル", text: $model.settings.ytDlpPath)
           Text("空欄の場合は自動検出します。").font(.caption).foregroundStyle(.secondary)
         }
+        LiveSpeechSettings(model: model)
         Section("動画キャッシュ") {
           Picker("容量の上限", selection: $model.settings.cacheMB) {
             ForEach([256, 512, 1024, 2048, 5120], id: \.self) { Text("\($0) MB").tag($0) }

@@ -18,6 +18,7 @@ struct SettingsTests {
       #expect(!settings.advancedMode)
       #expect(settings.dictionaryBrowser == "system")
       #expect(settings.realtimePronunciationEnabled)
+      #expect(settings.subtitleRowSpacing == 1 && settings.liveSubtitleRowSpacing == 1)
     }
   }
   @Test func providerModelsAndCachePathRoundTripSeparately() throws {
@@ -29,6 +30,8 @@ struct SettingsTests {
     settings.advancedMode = true
     settings.realtimePronunciationEnabled = false
     settings.dictionaryBrowser = "browser:com.apple.Safari"
+    settings.subtitleRowSpacing = 0.75
+    settings.liveSubtitleRowSpacing = 0.2
     let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
     #expect(decoded == settings)
     #expect(decoded.grammarModel == "Local-Model")
@@ -37,5 +40,10 @@ struct SettingsTests {
     #expect(codex.grammarModel == "gpt-6-luna")
     #expect(codex.cacheURL.path == "/tmp/Subritz Cache")
     #expect(AppSettings().cacheURL == AppSettings.defaultCacheURL)
+  }
+  @Test func subtitleSpacingPreferencesStayWithinReadableSliderRange() throws {
+    let decoded = try JSONDecoder().decode(AppSettings.self,
+      from: Data(#"{"subtitleRowSpacing":-2,"liveSubtitleRowSpacing":5}"#.utf8))
+    #expect(decoded.subtitleRowSpacing == 0 && decoded.liveSubtitleRowSpacing == 1)
   }
 }

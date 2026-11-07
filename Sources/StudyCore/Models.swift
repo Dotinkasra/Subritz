@@ -134,6 +134,11 @@ public struct AppSettings: Codable, Sendable, Equatable {
   public var aiGrammarEnabled = true
   public var advancedMode = false
   public var realtimePronunciationEnabled = true
+  public var subtitleRowSpacing = 1.0
+  public var liveSubtitleRowSpacing = 1.0
+  public var speechAudioSource = SpeechAudioSource.system
+  public var speechMicrophoneID = ""
+  public var liveSpeechCacheMB = 4
   public var cacheDirectory = ""
   // Compatibility for callers using the active provider's model.
   public var model: String {
@@ -160,7 +165,9 @@ public struct AppSettings: Codable, Sendable, Equatable {
   enum CodingKeys: String, CodingKey {
     case ytDlpPath, codexPath, dictionary, provider, baseURL, localModel, codexModel,
       cacheDirectory, timeout, cacheMB, localConcurrency, codexConcurrency, aiGrammarEnabled,
-      advancedMode, dictionaryBrowser, realtimePronunciationEnabled
+      advancedMode, dictionaryBrowser, realtimePronunciationEnabled,
+      speechAudioSource, speechMicrophoneID, liveSpeechCacheMB,
+      subtitleRowSpacing, liveSubtitleRowSpacing
   }
   enum LegacyKeys: String, CodingKey { case model }
   public init(from decoder: Decoder) throws {
@@ -178,6 +185,11 @@ public struct AppSettings: Codable, Sendable, Equatable {
     advancedMode = try c.decodeIfPresent(Bool.self, forKey: .advancedMode) ?? advancedMode
     realtimePronunciationEnabled = try c.decodeIfPresent(Bool.self, forKey: .realtimePronunciationEnabled)
       ?? realtimePronunciationEnabled
+    subtitleRowSpacing = min(1, max(0, try c.decodeIfPresent(Double.self, forKey: .subtitleRowSpacing) ?? subtitleRowSpacing))
+    liveSubtitleRowSpacing = min(1, max(0, try c.decodeIfPresent(Double.self, forKey: .liveSubtitleRowSpacing) ?? liveSubtitleRowSpacing))
+    speechAudioSource = try c.decodeIfPresent(SpeechAudioSource.self, forKey: .speechAudioSource) ?? speechAudioSource
+    speechMicrophoneID = try c.decodeIfPresent(String.self, forKey: .speechMicrophoneID) ?? speechMicrophoneID
+    liveSpeechCacheMB = max(1, min(64, try c.decodeIfPresent(Int.self, forKey: .liveSpeechCacheMB) ?? liveSpeechCacheMB))
     cacheDirectory = try c.decodeIfPresent(String.self, forKey: .cacheDirectory) ?? cacheDirectory
     localConcurrency = max(
       1, min(2, try c.decodeIfPresent(Int.self, forKey: .localConcurrency) ?? 1))

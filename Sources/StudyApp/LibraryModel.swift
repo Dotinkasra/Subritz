@@ -53,7 +53,7 @@ extension StudyModel {
     }
   }
   func recordCurrentVideo() {
-    guard let video = document?.video, library != nil || libraryStartup != nil else { return }
+    guard !isLiveSpeech, let video = document?.video, library != nil || libraryStartup != nil else { return }
     let date = Date()
     mutateLibrary { try await $0.record(video, at: date) }
   }
@@ -78,7 +78,7 @@ extension StudyModel {
     pendingFavoriteIDs.insert(id)
     let entry = dictionaryEntry
     let expression = pinnedExpression ?? resolvedExpression
-    let video = document?.video
+    let video = isLiveSpeech ? nil : document?.video
     let date = Date()
     let provider: any DictionaryProvider =
       settings.dictionary == "eijiro" && eijiro != nil ? eijiro! : MacDictionaryProvider()
@@ -137,7 +137,7 @@ extension StudyModel {
     return load(startTime: request.time)
   }
   var canSaveBookmark: Bool {
-    ready && document != nil && time.isFinite && time >= 0 && !savingBookmark
+    !isLiveSpeech && ready && document != nil && time.isFinite && time >= 0 && !savingBookmark
       && (library != nil || libraryStartup != nil)
   }
   func saveBookmark() {
@@ -155,7 +155,7 @@ extension StudyModel {
     }) { try await $0.saveTimestamp(timestamp) }
   }
   func saveExitTimestamp() {
-    guard ready, let video = document?.video, time.isFinite, time >= 0,
+    guard !isLiveSpeech, ready, let video = document?.video, time.isFinite, time >= 0,
       library != nil || libraryStartup != nil else { return }
     let timestamp = VideoTimestamp(video: video, time: time, kind: .resume)
     mutateLibrary { try await $0.saveTimestamp(timestamp) }
@@ -173,6 +173,6 @@ extension StudyModel {
       timeline?.tokens.contains(where: { $0.id == token.id }) == true
     else { return }
     pinDictionary(token)
-    seek(token.startTime)
+    if !isLiveSpeech { seek(token.startTime) }
   }
 }

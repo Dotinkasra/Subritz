@@ -65,6 +65,19 @@ import SwiftUI
   @Published var timestampMessage = ""
   @Published var pendingFavoriteIDs = Set<String>()
   @Published var pendingLibraryPlayback: LibraryPlaybackRequest?
+  @Published var liveSpeechSessionID: UUID?
+  @Published var liveSpeechState = LiveSpeechState.paused
+  @Published var liveSpeechStatus = ""
+  @Published var liveSpeechCacheBytes = 0
+  @Published var liveSubtitleRevision = 0
+  @Published var liveSubtitleAutoFollow = true
+  @Published var cachedSpeechSessions: [CachedSpeechSession] = []
+  var liveTranscriptCache = LiveTranscriptCache(limitBytes: 4 * 1024 * 1024)
+  var liveSpeechOperation: Task<Void, Never>?
+  var liveSpeechShutdown: Task<Void, Never>?
+  var liveSpeechRecognizer: (any LiveSpeechRecognizing)?
+  var liveSpeechRecognizerFactory: (() throws -> any LiveSpeechRecognizing)?
+  var liveSpeechRunID = UUID()
   var library: LibraryStore?
   var libraryStartup: Task<LibraryStore, Error>?
   var libraryOperation: Task<Void, Never>?
@@ -109,6 +122,7 @@ import SwiftUI
   init(prepareStorage: Bool = true, defaults: UserDefaults = .standard) {
     self.defaults = defaults
     settings = AppSettings.load(defaults: defaults)
+    liveTranscriptCache.setLimit(settings.liveSpeechCacheMB * 1024 * 1024)
     bridge.onTime = { [weak self] t, d, s in self?.update(time: t, duration: d, state: s) }
     bridge.onError = { [weak self] message in self?.error = message }
     guard prepareStorage else { return }
@@ -132,6 +146,7 @@ import SwiftUI
       self.error = error.localizedDescription
       return false
     }
+    if isLiveSpeech { closeVideo() }
     loadTask?.cancel()
     backgroundTask?.cancel()
     backgroundRunning = false
@@ -474,6 +489,7 @@ import SwiftUI
     }
   }
   func seek(_ t: Double) {
+    guard !isLiveSpeech else { return }
     bridge.seek(t)
     update(time: t, duration: duration, state: playing ? 1 : 2)
     prioritize(t, cancelObsolete: true)
@@ -668,6 +684,7 @@ import SwiftUI
     subtitleScrollPinned = false
     subtitlePinnedLineID = nil
     saveExitTimestamp()
+    endLiveSpeech()
     loadTask?.cancel()
     backgroundTask?.cancel()
     dictionaryTask?.cancel()
@@ -719,6 +736,11 @@ import SwiftUI
       return
     }
     settings.save(defaults: defaults)
+    if previous?.liveSpeechCacheMB != settings.liveSpeechCacheMB {
+      liveTranscriptCache.setLimit(max(1, min(64, settings.liveSpeechCacheMB)) * 1024 * 1024)
+      refreshLiveSpeechCache()
+      if let id = liveSpeechSessionID { renderLiveTranscript(id) }
+    }
     settingsMessage = "変更は自動で保存されます"
     if previous?.dictionary != settings.dictionary {
       invalidateDictionary()

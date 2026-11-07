@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import StudyCore
 @testable import StudyApp
 
 @MainActor struct SubtitleScrollTests {
@@ -52,5 +53,31 @@ import Testing
     #expect(model.subtitlePinnedLineID == target)
     model.toggleSubtitleScrollPin(at: model.subtitleLines[1].id)
     #expect(model.subtitlePinnedLineID == nil && !model.subtitleScrollPinned)
+  }
+  @Test func spacingChangesKeepPlaybackSearchAndPinAndSaveModesIndependently() throws {
+    let fixture = try SubtitleSearchInteractionTests().fixture()
+    let (model, defaults, suite) = try SettingsLifecycleTests().isolatedModel()
+    defer { model.closeVideo(); defaults.removePersistentDomain(forName: suite) }
+    model.document = fixture.document
+    model.timeline = fixture.timeline
+    model.ready = true
+    model.grammarEnabledForVideo = false
+    model.toggleSubtitleScrollPin(at: model.subtitleLines[1].id)
+    model.openSubtitleSearch(); model.setSubtitleSearchQuery("robot")
+    let pinned = model.subtitlePinnedLineID, token = model.currentToken?.id, time = model.time
+    let matches = model.subtitleSearchResults.matches.count
+    model.settings.timeout = 1 // An unfinished settings edit must not be saved by the slider.
+    model.setSubtitleRowSpacing(0.4)
+    #expect(model.subtitleRowSpacing == 0.4)
+    #expect(model.subtitlePinnedLineID == pinned && model.currentToken?.id == token && model.time == time)
+    #expect(model.subtitleSearchVisible && model.subtitleSearchResults.matches.count == matches)
+    model.liveSpeechSessionID = UUID()
+    #expect(model.subtitleRowSpacing == 1)
+    model.setSubtitleRowSpacing(0)
+    #expect(model.settings.subtitleRowSpacing == 0.4 && model.settings.liveSubtitleRowSpacing == 0)
+    let saved = StudyCore.AppSettings.load(defaults: model.defaults)
+    #expect(saved.subtitleRowSpacing == 0.4 && saved.liveSubtitleRowSpacing == 0 && saved.timeout == 120)
+    model.setSubtitleRowSpacing(.nan)
+    #expect(model.subtitleRowSpacing == 0)
   }
 }

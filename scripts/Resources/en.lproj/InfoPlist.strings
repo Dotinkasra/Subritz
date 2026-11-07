@@ -1,2 +1,5 @@
 "CFBundleDisplayName" = "Subritz";
 "CFBundleName" = "Subritz";
+"NSMicrophoneUsageDescription" = "Transcribe English from your selected microphone on this Mac and display captions. Audio is not saved.";
+"NSSpeechRecognitionUsageDescription" = "Transcribe English on this Mac and display captions and dictionary entries.";
+"NSAudioCaptureUsageDescription" = "Transcribe English playing on this Mac and display captions. Audio is not saved.";
