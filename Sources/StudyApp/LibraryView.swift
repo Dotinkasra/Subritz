@@ -283,6 +283,7 @@ struct FavoriteDefinitionView: View {
         HStack(alignment: .top) {
           Text(word.surface).font(.system(size: 38, weight: .semibold)).textSelection(.enabled)
           Spacer()
+          WordSpeechButton(word: word.surface, session: model.session, quality: model.settings.wordSpeechQuality)
           Button { model.removeFavorite(word.id) } label: { Image(systemName: "star.fill") }
             .foregroundStyle(.orange).disabled(model.pendingFavoriteIDs.contains(word.id))
             .help("お気に入りを解除")
