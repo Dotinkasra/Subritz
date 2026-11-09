@@ -215,6 +215,9 @@ public struct CaptionLine: Identifiable, Equatable {
   public var id: UUID
   public var index: Int
   public var tokens: [Token]
+  public init(id: UUID, index: Int, tokens: [Token]) {
+    self.id = id; self.index = index; self.tokens = tokens
+  }
   public var startTime: Double { tokens.first?.startTime ?? 0 }
   public var endTime: Double { tokens.last?.endTime ?? startTime }
 }
