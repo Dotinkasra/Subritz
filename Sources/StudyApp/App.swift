@@ -447,8 +447,9 @@ struct SubtitlePane: View {
     let bottomDistance: Double
   }
   private static let liveEndID = "live-subtitle-end"
-  private struct LiveFollowLayout: Hashable {
+  private struct SubtitleFollowLayout: Hashable {
     let session: UUID
+    let target: UUID?
     let revision: Int?
     let width: CGFloat
     let height: CGFloat
@@ -510,21 +511,22 @@ struct SubtitlePane: View {
               }
             }
           }
-          // Observe live rows for pinning/search without making their IDs a
-          // competing target. Pinning a tall row must retain the exact offset,
-          // rather than recentering the whole row as it continues to grow.
-          .scrollPosition(id: Binding(get: { model.isLiveSpeech ? nil : visibleLineID },
+          // Visible rows are observations for pinning/prefetching, never scroll
+          // commands. Feeding them back as targets competes with playback and
+          // can jump to an unrelated row when lazy row heights are recalculated.
+          .scrollPosition(id: Binding(get: { nil as UUID? },
             set: { visibleLineID = $0 }), anchor: .center)
           .defaultScrollAnchor(model.followsLiveSubtitles && !userScrolling ? .bottom : nil, for: .sizeChanges)
-          .task(id: LiveFollowLayout(session: model.session, revision: model.liveSubtitleFollowRevision,
+          .task(id: SubtitleFollowLayout(session: model.session, target: model.subtitleFollowLineID(),
+            revision: model.liveSubtitleFollowRevision,
             width: geometry.size.width, height: geometry.size.height, spacing: model.subtitleRowSpacing,
-            userScrolling: userScrolling)) {
-            guard model.followsLiveSubtitles, !userScrolling else { return }
-            // Wait until the new text has entered the view tree. The bottom
-            // anchor then maintains following through lazy height corrections.
+            userScrolling: model.isLiveSpeech && userScrolling)) {
+            guard model.subtitleFollowLineID() != nil else { return }
+            // Scroll after the new row/layout has entered the view tree, both
+            // on playback changes and after resizing or changing line spacing.
             await Task.yield()
-            guard !Task.isCancelled, model.followsLiveSubtitles, !userScrolling else { return }
-            proxy.scrollTo(Self.liveEndID, anchor: .bottom)
+            guard !Task.isCancelled else { return }
+            follow(proxy)
           }
           .onScrollGeometryChange(for: LiveScrollGeometry.self) { geometry in
             LiveScrollGeometry(offset: geometry.contentOffset.y,
@@ -546,8 +548,6 @@ struct SubtitlePane: View {
           }
           .onChange(of: model.session) { userScrolling = false }
           .onChange(of: visibleLineID) { _, id in model.prefetchDictionary(nearLine: id) }
-          .onAppear { follow(proxy) }
-          .onChange(of: model.currentLineIndex) { if !model.isLiveSpeech { follow(proxy) } }
           .onChange(of: model.playing) { if model.playing { follow(proxy) } }
           .onChange(of: model.subtitleScrollPinned) { _, pinned in
             if !pinned { follow(proxy, ignoringSearch: true) }
