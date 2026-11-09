@@ -36,7 +36,7 @@ struct SubtitleLayoutControls: View {
               )
               .accessibilityLabel("字幕の文字サイズ")
             }
-            parameter("1行の文字数", value: "約\(model.subtitleWrapCharacters)文字") {
+            parameter("1行の文字数", value: model.subtitleWrapCharacters == SubtitleAppearance.characterRange.upperBound ? "画面幅いっぱい" : "約\(model.subtitleWrapCharacters)文字") {
               Slider(
                 value: Binding(
                   get: { Double(model.subtitleWrapCharacters) },
@@ -59,7 +59,7 @@ struct SubtitleLayoutControls: View {
               )
               .accessibilityLabel("字幕の行間")
             }
-            Text("文字サイズと文字数はスライダーの中央が初期値です。単語の途中では折り返さず、画面幅に合わせて自動で改行します。設定はYouTubeと音声認識で別々に保存します。")
+            Text("文字サイズと文字数はスライダーの中央が初期値です。元の字幕の区切りをまたいで折り返します。文字数を最大にすると、固定の文字数制限を外して画面幅まで使います。設定はYouTubeと音声認識で別々に保存します。")
               .font(.caption).foregroundStyle(.secondary)
             HStack {
               Spacer()

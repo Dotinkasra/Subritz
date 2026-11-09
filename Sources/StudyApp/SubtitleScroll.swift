@@ -22,11 +22,14 @@ extension StudyModel {
     guard ready else { return }
     subtitleScrollPinned.toggle()
     if subtitleScrollPinned {
-      let selected = lineID.flatMap { id in subtitleLines.contains(where: { $0.id == id }) ? id : nil }
-      subtitlePinnedLineID = selected ?? (
-        subtitleLines.indices.contains(currentLineIndex) ? subtitleLines[currentLineIndex].id : nil)
+      let requested = lineID ?? subtitlePlaybackAnchorID
+      let selected = requested.flatMap { id in subtitleLines.first { $0.tokens.contains(where: { $0.id == id }) } }
+        ?? (subtitleLines.indices.contains(currentLineIndex) ? subtitleLines[currentLineIndex] : nil)
+      subtitlePinnedLineID = selected?.id
+      subtitlePinnedTokenID = requested.flatMap { id in selected?.tokens.first(where: { $0.id == id })?.id } ?? selected?.tokens.first?.id
     } else {
       subtitlePinnedLineID = nil
+      subtitlePinnedTokenID = nil
       if isLiveSpeech { liveSubtitleAutoFollow = true }
     }
   }

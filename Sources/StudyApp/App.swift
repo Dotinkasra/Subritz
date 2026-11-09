@@ -448,6 +448,7 @@ struct PlaybackControls: View {
 }
 struct SubtitlePane: View {
   @ObservedObject var model: StudyModel
+  @StateObject private var display = SubtitleDisplayState()
   @State private var visibleLineID: UUID?
   @State private var userScrolling = false
   private struct LiveScrollGeometry: Equatable {
@@ -455,9 +456,26 @@ struct SubtitlePane: View {
     let bottomDistance: Double
   }
   private static let liveEndID = "live-subtitle-end"
+  private struct ReflowInputs: Hashable {
+    let session: UUID
+    let sourceRevision: Int
+    let width: CGFloat
+    let characters: Int
+    let fontScale: Double
+    let grammar: Bool
+  }
+  private var currentDisplayRowID: UUID? {
+    let source = model.subtitleLines.indices.contains(model.currentLineIndex) ? model.subtitleLines[model.currentLineIndex].id : nil
+    return display.layout.rowID(containing: model.currentToken?.id ?? model.subtitlePlaybackAnchorID ?? source)
+  }
+  private var displayFollowRowID: UUID? {
+    guard model.subtitleFollowLineID() != nil else { return nil }
+    return model.isLiveSpeech ? display.layout.rows.last?.id : currentDisplayRowID
+  }
   private struct SubtitleFollowLayout: Hashable {
     let session: UUID
     let target: UUID?
+    let displayRevision: Int
     let revision: Int?
     let width: CGFloat
     let height: CGFloat
@@ -501,15 +519,17 @@ struct SubtitlePane: View {
           ScrollView {
             VStack(spacing: 0) {
             LazyVStack(alignment: .leading, spacing: 8) {
-              ForEach(model.subtitleLines) { line in
+              ForEach(display.layout.rows) { line in
                 SubtitleLineView(
-                  model: model, line: line, presentation: SubtitleLinePresentation(model: model, line: line)
+                  model: model, line: line, presentation: SubtitleLinePresentation(model: model, line: line,
+                    current: line.id == currentDisplayRowID,
+                    grammarNearby: currentDisplayRowID.flatMap { display.layout.tokenRows[$0] }.map { abs(line.index - $0) <= 1 } ?? false)
                 ).equatable()
                 .frame(minHeight: rowHeight, alignment: .center)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { model.toggleSubtitleScrollPin(at: line.id) }
                 .overlay {
-                  if model.subtitlePinnedLineID == line.id {
+                  if model.subtitleScrollPinned && display.layout.rowID(containing: model.subtitlePinnedTokenID ?? model.subtitlePinnedLineID) == line.id {
                     RoundedRectangle(cornerRadius: 8).stroke(Color.orange, lineWidth: 2)
                       .allowsHitTesting(false)
                   }
@@ -528,8 +548,15 @@ struct SubtitlePane: View {
           .scrollPosition(id: Binding(get: { nil as UUID? },
             set: { visibleLineID = $0 }), anchor: .center)
           .defaultScrollAnchor(model.followsLiveSubtitles && !userScrolling ? .bottom : nil, for: .sizeChanges)
-          .task(id: SubtitleFollowLayout(session: model.session, target: model.subtitleFollowLineID(),
-            revision: model.liveSubtitleFollowRevision,
+          .task(id: ReflowInputs(session: model.session, sourceRevision: model.subtitleTimelineRevision,
+            width: geometry.size.width, characters: model.subtitleWrapCharacters,
+            fontScale: model.subtitleFontScale, grammar: model.grammarEnabledForVideo)) {
+            await display.rebuild(lines: model.subtitleLines, width: max(1, geometry.size.width - 36),
+              characters: model.subtitleWrapCharacters, fontScale: model.subtitleFontScale,
+              grammar: model.grammarEnabledForVideo, session: model.session)
+          }
+          .task(id: SubtitleFollowLayout(session: model.session, target: displayFollowRowID,
+            displayRevision: display.revision, revision: model.liveSubtitleFollowRevision,
             width: geometry.size.width, height: geometry.size.height, spacing: model.subtitleRowSpacing,
             fontScale: model.subtitleFontScale, wrapCharacters: model.subtitleWrapCharacters,
             userScrolling: model.isLiveSpeech && userScrolling)) {
@@ -559,7 +586,22 @@ struct SubtitlePane: View {
             userScrolling = manual
           }
           .onChange(of: model.session) { userScrolling = false }
-          .onChange(of: visibleLineID) { _, id in model.prefetchDictionary(nearLine: id) }
+          .onChange(of: visibleLineID) { _, id in
+            model.prefetchDictionary(nearLine: id.flatMap { display.layout.tokenSourceLines[$0] })
+          }
+          .onChange(of: display.revision) {
+            Task { @MainActor in
+              await Task.yield()
+              if model.browsingSubtitleSearch { showSearchResult(proxy) }
+              else if model.subtitleScrollPinned,
+                let id = display.layout.rowID(containing: model.subtitlePinnedTokenID ?? model.subtitlePinnedLineID) {
+                proxy.scrollTo(id, anchor: .center)
+              } else if model.isLiveSpeech, !model.liveSubtitleAutoFollow, !userScrolling,
+                let id = display.layout.rowID(containing: visibleLineID) {
+                proxy.scrollTo(id, anchor: .center)
+              }
+            }
+          }
           .onChange(of: model.playing) { if model.playing { follow(proxy) } }
           .onChange(of: model.subtitleScrollPinned) { _, pinned in
             if !pinned { follow(proxy, ignoringSearch: true) }
@@ -599,17 +641,17 @@ struct SubtitlePane: View {
   }
   func follow(_ proxy: ScrollViewProxy, ignoringSearch: Bool = false) {
     guard !model.isLiveSpeech || !userScrolling else { return }
-    guard let id = model.subtitleFollowLineID(ignoringSearch: ignoringSearch) else { return }
+    guard model.subtitleFollowLineID(ignoringSearch: ignoringSearch) != nil else { return }
     if model.isLiveSpeech {
       proxy.scrollTo(Self.liveEndID, anchor: .bottom)
       return
     }
     // Follow on line changes, not on every clock tick: scrolling still works within a line.
-    proxy.scrollTo(id, anchor: .center)
+    if let id = currentDisplayRowID { proxy.scrollTo(id, anchor: .center) }
   }
   func showSearchResult(_ proxy: ScrollViewProxy) {
     guard model.subtitleSearchVisible, let match = model.currentSubtitleSearchMatch else { return }
-    proxy.scrollTo(match.lineID, anchor: .center)
+    if let id = display.layout.rowID(containing: match.fragments.first?.tokenID) { proxy.scrollTo(id, anchor: .center) }
   }
 }
 struct SubtitleLineView: View, Equatable {

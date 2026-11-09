@@ -167,6 +167,7 @@ extension StudyModel {
     let changed = currentToken?.id != last?.id
     currentToken = last
     currentLineIndex = max(0, (timeline?.lines.count ?? 0) - 1)
+    subtitlePlaybackAnchorID = last?.id
     activeSentenceIndex = document?.sentences.last?.index
     currentSentence = document?.sentences.last
     time = cached.endTime
@@ -178,6 +179,7 @@ extension StudyModel {
     if let pinned = subtitlePinnedLineID, !subtitleLines.contains(where: { $0.id == pinned }) {
       subtitlePinnedLineID = subtitleLines.first?.id
     }
+    if let anchor = subtitlePinnedTokenID, !retained.contains(anchor) { subtitlePinnedTokenID = subtitleLines.first?.tokens.first?.id }
     // Search offsets belong to the current snapshot, including volatile edits.
     refreshLiveSubtitleSearch()
     // A partial can grow without changing its row ID/index; cache eviction can

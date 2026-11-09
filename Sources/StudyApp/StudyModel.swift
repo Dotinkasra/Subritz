@@ -20,6 +20,8 @@ import SwiftUI
   @Published var currentLineIndex = 0
   @Published var subtitleScrollPinned = false
   @Published var subtitlePinnedLineID: UUID?
+  @Published var subtitlePinnedTokenID: UUID?
+  var subtitlePlaybackAnchorID: UUID?
   @Published var subtitleSearchVisible = false
   @Published var subtitleSearchQuery = ""
   @Published var subtitleSearchResults = SubtitleSearchResults()
@@ -122,7 +124,8 @@ import SwiftUI
   var storageTask: Task<(StudyStore, EijiroProvider), Error>?
   var store: StudyStore?
   var eijiro: EijiroProvider?
-  var timeline: Timeline?
+  var subtitleTimelineRevision = 0
+  var timeline: Timeline? { didSet { subtitleTimelineRevision &+= 1 } }
   var session = UUID()
   var fingerprint = ""
   var scheduler: GrammarScheduler?
@@ -189,6 +192,8 @@ import SwiftUI
     resetSubtitleSearchForVideo()
     subtitleScrollPinned = false
     subtitlePinnedLineID = nil
+    subtitlePinnedTokenID = nil
+    subtitlePlaybackAnchorID = nil
     let sid = session
     ready = false
     loading = true
@@ -492,6 +497,7 @@ import SwiftUI
     guard let timeline else { return }
     if let line = timeline.line(at: t), currentLineIndex != line.index {
       currentLineIndex = line.index
+      subtitlePlaybackAnchorID = line.tokens.first?.id
     }
     let sentence = timeline.sentence(at: t)
     if currentSentence?.id != sentence?.id {
@@ -499,6 +505,7 @@ import SwiftUI
       currentSentence = sentence.flatMap { document?.sentences[$0.index] }
     }
     let token = timeline.token(at: t)
+    if let token { subtitlePlaybackAnchorID = token.id }
     let tokenChanged = currentToken?.id != token?.id
     let resumeRealtime =
       realtime && state == 1 && dictionaryIsPinned && !draggingDictionarySelection
@@ -715,6 +722,8 @@ import SwiftUI
     resetSubtitleSearchForVideo()
     subtitleScrollPinned = false
     subtitlePinnedLineID = nil
+    subtitlePinnedTokenID = nil
+    subtitlePlaybackAnchorID = nil
     saveExitTimestamp()
     endLiveSpeech()
     loadTask?.cancel()
