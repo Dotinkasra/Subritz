@@ -81,6 +81,14 @@ import SwiftUI
   var library: LibraryStore?
   var libraryStartup: Task<LibraryStore, Error>?
   var libraryOperation: Task<Void, Never>?
+  var listeningBuffer = ListeningBuffer()
+  var playbackListening = PlaybackListeningTracker()
+  var speechListening = SpeechListeningTracker()
+  var listeningCoverage: EnglishListeningCoverage?
+  var listeningCoverageSession: UUID?
+  var listeningCheckpointUptime: Double?
+  var listeningSaveTask: Task<Void, Never>?
+  @Published var listeningSaveError: String?
   var youtubeProviderOverride: (any YouTubeProvider)?
   var grammarProviderOverride: (any GrammarProvider)?
   let defaults: UserDefaults
@@ -124,6 +132,7 @@ import SwiftUI
     settings = AppSettings.load(defaults: defaults)
     liveTranscriptCache.setLimit(settings.liveSpeechCacheMB * 1024 * 1024)
     bridge.onTime = { [weak self] t, d, s in self?.update(time: t, duration: d, state: s) }
+    bridge.onListeningSample = { [weak self] sample in self?.recordListeningPlayback(sample) }
     bridge.onError = { [weak self] message in self?.error = message }
     guard prepareStorage else { return }
     let directory = settings.cacheURL
@@ -147,6 +156,7 @@ import SwiftUI
       return false
     }
     if isLiveSpeech { closeVideo() }
+    resetListeningPlayback()
     loadTask?.cancel()
     backgroundTask?.cancel()
     backgroundRunning = false
@@ -490,6 +500,7 @@ import SwiftUI
   }
   func seek(_ t: Double) {
     guard !isLiveSpeech else { return }
+    resetListeningPlayback()
     bridge.seek(t)
     update(time: t, duration: duration, state: playing ? 1 : 2)
     prioritize(t, cancelObsolete: true)
@@ -680,6 +691,7 @@ import SwiftUI
     }
   }
   func closeVideo() {
+    resetListeningPlayback(clearCoverage: true)
     resetSubtitleSearchForVideo()
     subtitleScrollPinned = false
     subtitlePinnedLineID = nil

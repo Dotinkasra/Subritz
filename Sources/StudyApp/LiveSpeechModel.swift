@@ -71,6 +71,7 @@ extension StudyModel {
       await previous?.value
       await previousRecognizer?.stop(finalize: true)
       guard !Task.isCancelled, sid == session, liveSpeechSessionID == id else { return }
+      finishListeningSpeechRun()
       if !listen {
         liveSpeechState = .paused
         liveSpeechStatus = "音声認識を一時停止しています"
@@ -79,6 +80,7 @@ extension StudyModel {
       let run = UUID()
       liveSpeechRunID = run
       let offset = liveTranscriptCache.session(id)?.endTime ?? 0
+      beginListeningSpeechRun()
       do {
         let recognizer: any LiveSpeechRecognizing
         if let liveSpeechRecognizerFactory { recognizer = try liveSpeechRecognizerFactory() }
@@ -89,6 +91,7 @@ extension StudyModel {
         try await recognizer.start(source: settings.speechAudioSource, microphoneID: settings.speechMicrophoneID,
           onUpdate: { [weak self] update in
             guard let self, self.session == sid, self.liveSpeechRunID == run else { return }
+            self.recordListeningSpeech(update)
             do {
               if try self.liveTranscriptCache.apply(update.offset(by: offset), to: id) {
                 self.renderLiveTranscript(id)
@@ -116,6 +119,7 @@ extension StudyModel {
     }
   }
   private func failLiveSpeech(_ message: String) {
+    finishListeningSpeechRun()
     liveSpeechRunID = UUID()
     liveSpeechOperation?.cancel()
     liveSpeechState = .failed
@@ -127,6 +131,7 @@ extension StudyModel {
     liveSpeechShutdown = Task { await recognizer?.stop(finalize: false) }
   }
   func endLiveSpeech() {
+    finishListeningSpeechRun()
     liveSpeechRunID = UUID()
     let previous = liveSpeechOperation, recognizer = liveSpeechRecognizer, shutdown = liveSpeechShutdown
     previous?.cancel()

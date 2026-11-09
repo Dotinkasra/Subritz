@@ -17,8 +17,9 @@ import SwiftUI
     Task {
       await model.liveSpeechShutdown?.value
       await model.libraryOperation?.value
+      await model.listeningSaveTask?.value
       var shouldQuit = true
-      if let error = model.libraryError {
+      if let error = model.libraryError ?? model.listeningSaveError {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "学習記録を保存できませんでした"
@@ -179,6 +180,8 @@ struct SubritzCommands: Commands {
       }.keyboardShortcut("f", modifiers: .command).disabled(!model.ready)
     }
     CommandMenu(String(localized: "Library")) {
+      Button("英語の視聴時間") { openWindow(id: "listening-statistics") }
+      Divider()
       Button(String(localized: "Video History")) {
         model.librarySection = .history
         openWindow(id: "library")

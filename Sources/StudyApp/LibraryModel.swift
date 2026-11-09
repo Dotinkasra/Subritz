@@ -2,6 +2,34 @@ import StudyCore
 import SwiftUI
 
 enum LibrarySection: String, CaseIterable { case history, timestamps, favorites }
+struct TimestampVideoGroup: Identifiable {
+  var id: String { video.id }
+  let video: Video
+  let timestamps: [VideoTimestamp]
+  let lastSavedAt: Date
+
+  static func grouped(_ timestamps: [VideoTimestamp]) -> [Self] {
+    Dictionary(grouping: timestamps, by: { $0.video.id }).values.compactMap { items in
+      guard let latest = items.max(by: { $0.savedAt < $1.savedAt }) else { return nil }
+      return Self(video: latest.video, timestamps: items.sorted {
+        if $0.time != $1.time { return $0.time < $1.time }
+        if $0.savedAt != $1.savedAt { return $0.savedAt > $1.savedAt }
+        return $0.id < $1.id
+      }, lastSavedAt: latest.savedAt)
+    }.sorted {
+      if $0.lastSavedAt != $1.lastSavedAt { return $0.lastSavedAt > $1.lastSavedAt }
+      return $0.id < $1.id
+    }
+  }
+
+  func matches(_ query: String) -> Bool {
+    query.isEmpty || video.title.localizedCaseInsensitiveContains(query)
+      || timestamps.contains {
+        PlaybackTime.format($0.time).contains(query)
+          || ($0.wordID?.localizedCaseInsensitiveContains(query) ?? false)
+      }
+  }
+}
 struct LibraryPlaybackRequest: Identifiable {
   let id = UUID()
   let video: Video

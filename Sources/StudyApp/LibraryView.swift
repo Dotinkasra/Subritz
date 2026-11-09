@@ -10,12 +10,8 @@ struct LibraryView: View {
   var history: [VideoHistoryItem] {
     model.videoHistory.filter { query.isEmpty || $0.video.title.localizedCaseInsensitiveContains(query) }
   }
-  var timestamps: [VideoTimestamp] {
-    model.videoTimestamps.filter {
-      query.isEmpty || $0.video.title.localizedCaseInsensitiveContains(query)
-        || PlaybackTime.format($0.time).contains(query)
-        || ($0.wordID?.localizedCaseInsensitiveContains(query) ?? false)
-    }
+  var timestampVideos: [TimestampVideoGroup] {
+    TimestampVideoGroup.grouped(model.videoTimestamps).filter { $0.matches(query) }
   }
   var favorites: [FavoriteWord] {
     model.favoriteWords.filter {
@@ -24,13 +20,15 @@ struct LibraryView: View {
     }
   }
   var selectedHistory: VideoHistoryItem? { history.first { $0.id == selections[.history] } }
-  var selectedTimestamp: VideoTimestamp? { timestamps.first { $0.id == selections[.timestamps] } }
+  var selectedTimestampVideo: TimestampVideoGroup? {
+    timestampVideos.first { $0.id == selections[.timestamps] }
+  }
   var selectedFavorite: FavoriteWord? { favorites.first { $0.id == selections[.favorites] } ?? favorites.first }
   var selection: Binding<String?> {
     Binding(get: {
       switch model.librarySection {
       case .history: return selectedHistory?.id
-      case .timestamps: return selectedTimestamp?.id
+      case .timestamps: return selectedTimestampVideo?.id
       case .favorites: return selectedFavorite?.id
       }
     }, set: { selections[model.librarySection] = $0 })
@@ -91,7 +89,8 @@ struct LibraryView: View {
   var countDescription: String {
     switch model.librarySection {
     case .history: return "\(model.videoHistory.count) / 100件 · 最近開いた順"
-    case .timestamps: return "\(model.videoTimestamps.count) / 1000件 · 新しい記録順"
+    case .timestamps:
+      return "\(Set(model.videoTimestamps.map { $0.video.id }).count)本 · \(model.videoTimestamps.count) / 1000件 · 最近保存した動画順"
     case .favorites: return "\(model.favoriteWords.count)語 · 最近登録した順"
     }
   }
@@ -121,21 +120,19 @@ struct LibraryView: View {
           }.listStyle(.inset)
         }
       case .timestamps:
-        if timestamps.isEmpty { emptyList }
+        if timestampVideos.isEmpty { emptyList }
         else {
-          List(timestamps) { item in
+          List(timestampVideos) { item in
             Button {
-              if selectRow(item.id, in: .timestamps) { open(item) }
+              selections[.timestamps] = item.id
             } label: {
               VideoLibraryRow(video: item.video,
-                subtitle: PlaybackTime.format(item.time) + " · " + timestampLabel(item))
+                subtitle: "\(item.timestamps.count)件 · 最終保存 "
+                  + item.lastSavedAt.formatted(.dateTime.year().month().day().hour().minute()))
             }.buttonStyle(.plain).disabled(model.isChangingCacheDirectory)
               .listRowBackground(rowBackground(item.id, in: .timestamps))
               .accessibilityAddTraits(selections[.timestamps] == item.id ? .isSelected : [])
-              .help("クリックで選択、選択中の項目をもう一度クリックで保存した位置へ移動")
-              .contextMenu {
-                Button("タイムスタンプを削除", role: .destructive) { model.removeTimestamp(item) }
-              }
+              .help("この動画の保存したタイムスタンプを表示")
           }.listStyle(.inset)
         }
       case .favorites:
@@ -199,23 +196,48 @@ struct LibraryView: View {
         }
       } else { ContentUnavailableView("動画を選んでください", systemImage: "play.rectangle") }
     case .timestamps:
-      if let item = selectedTimestamp {
+      if let item = selectedTimestampVideo {
         ScrollView {
-          VStack(alignment: .leading, spacing: 20) {
+          LazyVStack(alignment: .leading, spacing: 12) {
             HistoryThumbnail(video: item.video)
             Text(item.video.title).font(.title2).textSelection(.enabled)
-            Text(PlaybackTime.format(item.time)).font(.system(size: 38, weight: .semibold)).monospacedDigit()
-            Text(timestampLabel(item)).foregroundStyle(.secondary)
-            Text(item.savedAt.formatted(.dateTime.year().month().day().hour().minute()))
-              .font(.caption).foregroundStyle(.secondary)
-            Button("この位置から開く", systemImage: "play.fill") { open(item) }
-              .disabled(model.isChangingCacheDirectory)
+            HStack {
+              Text("保存したタイムスタンプ").font(.headline)
+              Spacer()
+              Text("\(item.timestamps.count)件 · 再生時刻順").font(.caption).foregroundStyle(.secondary)
+            }.padding(.top, 8)
+            ForEach(item.timestamps) { timestamp in
+              HStack(spacing: 12) {
+                Button { open(timestamp) } label: {
+                  HStack(spacing: 12) {
+                    Image(systemName: "play.circle.fill").font(.title2).foregroundStyle(Color.accentColor)
+                    VStack(alignment: .leading, spacing: 5) {
+                      HStack {
+                        Text(PlaybackTime.format(timestamp.time)).font(.headline).monospacedDigit()
+                        Text(timestampLabel(timestamp)).font(.callout)
+                      }
+                      Text(timestamp.savedAt.formatted(.dateTime.year().month().day().hour().minute()))
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                  }.contentShape(Rectangle())
+                }.buttonStyle(.plain).disabled(model.isChangingCacheDirectory)
+                  .help("この位置から開く（" + PlaybackTime.format(timestamp.time) + "）")
+                Button(role: .destructive) { model.removeTimestamp(timestamp) } label: {
+                  Image(systemName: "trash")
+                }.buttonStyle(.borderless).help("タイムスタンプを削除")
+                  .accessibilityLabel(PlaybackTime.format(timestamp.time) + "のタイムスタンプを削除")
+              }.padding(12)
+                .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+            }
             Divider()
-            Text(item.videoURL).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-            Button("タイムスタンプを削除", role: .destructive) { model.removeTimestamp(item) }
+            Text(item.video.watchURL).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
           }.frame(maxWidth: .infinity, alignment: .leading).padding(24)
-        }
-      } else { ContentUnavailableView("タイムスタンプを選んでください", systemImage: "bookmark") }
+        }.id(item.id)
+      } else {
+        ContentUnavailableView("動画を選んでください", systemImage: "bookmark",
+          description: Text("保存したタイムスタンプを動画ごとに表示します。"))
+      }
     }
   }
   func open(_ item: VideoTimestamp) {

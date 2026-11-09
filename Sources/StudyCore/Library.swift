@@ -53,6 +53,8 @@ public actor LibraryStore {
       "CREATE TABLE IF NOT EXISTS video_timestamps(id TEXT PRIMARY KEY,video_id TEXT NOT NULL,time REAL NOT NULL,saved REAL NOT NULL,kind TEXT NOT NULL,word_id TEXT,payload TEXT NOT NULL)")
     try db.execute("CREATE INDEX IF NOT EXISTS timestamps_video ON video_timestamps(video_id)")
     try db.execute("CREATE INDEX IF NOT EXISTS timestamps_saved ON video_timestamps(saved DESC)")
+    try db.execute("CREATE TABLE IF NOT EXISTS listening_spans(id TEXT PRIMARY KEY,started REAL NOT NULL,ended REAL NOT NULL,source TEXT NOT NULL,CHECK(ended > started))")
+    try db.execute("CREATE INDEX IF NOT EXISTS listening_ended ON listening_spans(ended)")
     // Existing favorites already contain their video and occurrence time. Migrate once
     // so deleting a timestamp does not resurrect it on the next launch.
     if try db.rows("SELECT key FROM library_metadata WHERE key='timestampsSeeded'").isEmpty {
@@ -71,7 +73,7 @@ public actor LibraryStore {
         try db.execute("COMMIT")
       } catch { try? db.execute("ROLLBACK"); throw error }
     }
-    try db.execute("PRAGMA user_version=2")
+    try db.execute("PRAGMA user_version=3")
   }
   func encode<T: Encodable>(_ value: T) throws -> String {
     String(decoding: try JSONEncoder().encode(value), as: UTF8.self)

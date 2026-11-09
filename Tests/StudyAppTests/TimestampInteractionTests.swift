@@ -16,6 +16,31 @@ private actor TimestampVideoProvider: YouTubeProvider {
   func calls() -> [String] { requests }
 }
 @MainActor struct TimestampInteractionTests {
+  @Test func timestampVideosGroupAllPositionsAndSearchKeepsTheWholeVideo() throws {
+    let oldVideo = Video(id: "abcdefghijk", title: "Old garden title", duration: 120)
+    let updatedVideo = Video(id: oldVideo.id, title: "Paper garden", duration: 125)
+    let otherVideo = Video(id: "lmnopqrstuv", title: "Copper tower", duration: 60)
+    let date = Date(timeIntervalSince1970: 1_800_000_000)
+    let bookmark = VideoTimestamp(video: oldVideo, time: 80, savedAt: date)
+    let resume = VideoTimestamp(video: updatedVideo, time: 10, kind: .resume, savedAt: date.addingTimeInterval(30))
+    let favorite = VideoTimestamp(video: oldVideo, time: 40, kind: .favorite, wordID: "lantern",
+      savedAt: date.addingTimeInterval(10))
+    let other = VideoTimestamp(video: otherVideo, time: 20, savedAt: date.addingTimeInterval(20))
+    let groups = TimestampVideoGroup.grouped([other, favorite, bookmark, resume])
+    #expect(groups.map(\.id) == [oldVideo.id, otherVideo.id])
+    let group = try #require(groups.first)
+    #expect(group.video.title == "Paper garden" && group.lastSavedAt == resume.savedAt)
+    #expect(group.timestamps.map(\.id) == [resume.id, favorite.id, bookmark.id])
+    for query in ["paper", "1:20", "LANTERN"] {
+      let result = groups.filter { $0.matches(query) }
+      #expect(result.count == 1 && result.first?.timestamps.count == 3)
+    }
+    #expect(!group.matches("copper"))
+    let remaining = TimestampVideoGroup.grouped([other, favorite, bookmark])
+    #expect(remaining.map(\.id) == [otherVideo.id, oldVideo.id])
+    #expect(remaining.last?.timestamps.count == 2)
+    #expect(TimestampVideoGroup.grouped([other]).map(\.id) == [otherVideo.id])
+  }
   func fixture() throws -> (StudyModel, URL) {
     let (model, root) = try LibraryInteractionTests().libraryModel()
     model.document?.video.id = "abcdefghijk"

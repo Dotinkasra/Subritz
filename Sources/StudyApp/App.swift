@@ -17,6 +17,9 @@ import SwiftUI
     Window("お気に入りをエクスポート", id: "favorite-export") {
       FavoriteExportView(model: model)
     }.windowResizability(.contentSize)
+    Window("Subritz — 英語の視聴時間", id: "listening-statistics") {
+      ListeningStatisticsView(study: model).equatable()
+    }.defaultSize(width: 900, height: 620)
     Settings { SettingsView(model: model) }
   }
 }
@@ -54,6 +57,9 @@ struct MainView: View {
           }.labelStyle(.iconOnly).help("初期レイアウトに戻す")
             .accessibilityLabel("初期レイアウトに戻す")
         }
+        Button("英語の視聴時間", systemImage: "chart.bar.xaxis") {
+          openWindow(id: "listening-statistics")
+        }.labelStyle(.iconOnly).help("英語の視聴時間").accessibilityLabel("英語の視聴時間")
         Button("動画履歴", systemImage: "clock") {
           model.librarySection = .history
           openWindow(id: "library")

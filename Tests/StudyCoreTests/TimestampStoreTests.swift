@@ -71,7 +71,7 @@ struct TimestampStoreTests {
     let store = try LibraryStore(directory: root)
     let timestamp = try #require(try await store.timestamps().first)
     #expect(timestamp.kind == .favorite && timestamp.video.id == video.id)
-    #expect(try db.rows("PRAGMA user_version")[0][0] == "2")
+    #expect(try db.rows("PRAGMA user_version")[0][0] == "3")
     try await store.removeTimestamp(timestamp.id)
     let reopened = try LibraryStore(directory: root)
     #expect(try await reopened.timestamps().isEmpty)

@@ -6,6 +6,7 @@ import WebKit
 @MainActor final class PlayerBridge: NSObject, ObservableObject, WKScriptMessageHandler {
   weak var webView: WKWebView?
   var onTime: ((Double, Double, Int) -> Void)?
+  var onListeningSample: ((ListeningPlaybackSample) -> Void)?
   var onError: ((String) -> Void)?
   private var clock = PlaybackClock()
   private var timer: Timer?
@@ -92,8 +93,12 @@ import WebKit
     }
     self.duration = duration
     self.state = state
+    let now = CACurrentMediaTime()
+    let rate = body["rate"] as? Double ?? 1
+    onListeningSample?(ListeningPlaybackSample(mediaTime: time, uptime: now, date: Date(),
+      state: state, rate: rate, audible: body["muted"] as? Bool != true && (body["volume"] as? Double ?? 100) > 0))
     clock.sample(
-      time: time, now: CACurrentMediaTime(), state: state, rate: body["rate"] as? Double ?? 1)
+      time: time, now: now, state: state, rate: rate)
     onTime?(clock.position(now: CACurrentMediaTime()), duration, state)
   }
   func play() { webView?.evaluateJavaScript("player?.playVideo()") }
@@ -126,7 +131,7 @@ struct YouTubePlayer: NSViewRepresentable {
     web.loadHTMLString(
       """
       <!doctype html><html><head><meta name="referrer" content="strict-origin-when-cross-origin"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#player{margin:0;width:100%;height:100%;background:#111;overflow:hidden}</style></head><body><div id="player"></div><script>
-      let player; function sample(){post({time:player.getCurrentTime(),duration:player.getDuration(),state:player.getPlayerState(),rate:player.getPlaybackRate()})} function post(v){v.session='\(bridge.playbackID)';window.webkit.messageHandlers.player.postMessage(v)}
+      let player; function sample(){post({time:player.getCurrentTime(),duration:player.getDuration(),state:player.getPlayerState(),rate:player.getPlaybackRate(),muted:player.isMuted(),volume:player.getVolume()})} function post(v){v.session='\(bridge.playbackID)';window.webkit.messageHandlers.player.postMessage(v)}
       function onYouTubeIframeAPIReady(){ player=new YT.Player('player',{videoId:'\(videoID)',playerVars:{playsinline:1,origin:'https://jp.local.youtubeenglishstudy',cc_load_policy:0},events:{onReady:()=>{post({ready:true});sample();setInterval(sample,50)},onStateChange:sample,onPlaybackRateChange:sample,onError:e=>post({error:e.data})}}) }
       </script><script src="https://www.youtube.com/iframe_api"></script></body></html>
       """, baseURL: URL(string: "https://jp.local.youtubeenglishstudy"))
