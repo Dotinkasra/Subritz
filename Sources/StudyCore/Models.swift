@@ -155,6 +155,10 @@ public struct AppSettings: Codable, Sendable, Equatable {
   public var cacheDirectory = ""
   public var workspaceUpperFraction = 0.55
   public var workspaceLeadingFraction = 0.5
+  public var subtitleWrapCharacters = SubtitleAppearance.defaultCharacters
+  public var liveSubtitleWrapCharacters = SubtitleAppearance.defaultCharacters
+  public var subtitleFontScale = SubtitleAppearance.defaultFontScale
+  public var liveSubtitleFontScale = SubtitleAppearance.defaultFontScale
   // Compatibility for callers using the active provider's model.
   public var model: String {
     get { provider == "codex" ? codexModel : localModel }
@@ -182,7 +186,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
       cacheDirectory, timeout, cacheMB, localConcurrency, codexConcurrency, aiGrammarEnabled,
       advancedMode, dictionaryBrowser, realtimePronunciationEnabled, wordSpeechQuality,
       speechAudioSource, speechMicrophoneID, liveSpeechCacheMB,
-      subtitleRowSpacing, liveSubtitleRowSpacing, workspaceUpperFraction, workspaceLeadingFraction
+      subtitleRowSpacing, liveSubtitleRowSpacing, workspaceUpperFraction, workspaceLeadingFraction,
+      subtitleWrapCharacters, liveSubtitleWrapCharacters, subtitleFontScale, liveSubtitleFontScale
   }
   enum LegacyKeys: String, CodingKey { case model }
   public init(from decoder: Decoder) throws {
@@ -216,6 +221,10 @@ public struct AppSettings: Codable, Sendable, Equatable {
     cacheMB = try c.decodeIfPresent(Int.self, forKey: .cacheMB) ?? cacheMB
     workspaceUpperFraction = min(0.95, max(0.05, try c.decodeIfPresent(Double.self, forKey: .workspaceUpperFraction) ?? workspaceUpperFraction))
     workspaceLeadingFraction = min(0.95, max(0.05, try c.decodeIfPresent(Double.self, forKey: .workspaceLeadingFraction) ?? workspaceLeadingFraction))
+    subtitleWrapCharacters = SubtitleAppearance.clampedCharacters(try c.decodeIfPresent(Int.self, forKey: .subtitleWrapCharacters) ?? subtitleWrapCharacters)
+    liveSubtitleWrapCharacters = SubtitleAppearance.clampedCharacters(try c.decodeIfPresent(Int.self, forKey: .liveSubtitleWrapCharacters) ?? liveSubtitleWrapCharacters)
+    subtitleFontScale = SubtitleAppearance.clampedFontScale(try c.decodeIfPresent(Double.self, forKey: .subtitleFontScale) ?? subtitleFontScale)
+    liveSubtitleFontScale = SubtitleAppearance.clampedFontScale(try c.decodeIfPresent(Double.self, forKey: .liveSubtitleFontScale) ?? liveSubtitleFontScale)
     let old = try decoder.container(keyedBy: LegacyKeys.self)
     if let legacy = try old.decodeIfPresent(String.self, forKey: .model) {
       if provider == "codex", !c.contains(.codexModel) { codexModel = legacy }

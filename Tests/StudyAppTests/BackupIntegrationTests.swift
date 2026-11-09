@@ -75,10 +75,20 @@ import Testing
     try await model.library?.restoreBackupData(original)
     model.chooseBackupDestination(root.appendingPathComponent("destination"))
     model.setWorkspaceLayout(upper: 0.3, leading: 0.4)
+    model.setSubtitleFontScale(1.2)
+    model.setSubtitleWrapCharacters(55)
+    model.setSubtitleRowSpacing(0.4)
+    model.liveSpeechSessionID = UUID()
+    model.setSubtitleFontScale(0.8)
+    model.setSubtitleWrapCharacters(110)
+    model.setSubtitleRowSpacing(0.2)
+    model.liveSpeechSessionID = nil
+    let archivedSettings = AppSettings.load(defaults: model.defaults)
     model.backupNow()
     await model.backupTask?.value
     let backup = try #require(model.lastBackupURL)
     try await model.library?.restoreBackupData(.init())
+    model.resetWorkspaceLayout()
     model.setWorkspaceLayout(upper: 0.8, leading: 0.7)
     model.prepareBackupRestore(backup)
     await model.backupReadTask?.value
@@ -94,6 +104,11 @@ import Testing
     #expect(
       model.settings.workspaceUpperFraction == 0.3 && model.settings.workspaceLeadingFraction == 0.4
     )
+    #expect(AppSettings.load(defaults: model.defaults) == archivedSettings)
+    #expect(model.settings.subtitleFontScale == 1.2 && model.settings.liveSubtitleFontScale == 0.8)
+    #expect(
+      model.settings.subtitleWrapCharacters == 55
+        && model.settings.liveSubtitleWrapCharacters == 110)
     #expect(model.videoHistory.count == 1 && model.favoriteWords.count == 1)
     #expect(model.videoTimestamps.map(\.id) == original.timestamps.map(\.id))
     #expect(
@@ -171,6 +186,26 @@ import Testing
     let output = try #require(model.lastBackupURL)
     let archive = try await Task.detached { try BackupFiles.read(output) }.value
     #expect(archive.library.listening.reduce(0) { $0 + $1.seconds } == 6)
+    model.setAutomaticBackup(false)
+  }
+
+  @Test func subtitleLayoutChangesTriggerANewAutomaticBackup() async throws {
+    let (model, root) = try fixture()
+    defer { cleanup(model, root) }
+    model.backupDelayOverride = 0.01
+    model.chooseBackupDestination(root.appendingPathComponent("destination"), enable: true)
+    await model.backupSchedule?.value
+    await model.backupTask?.value
+    let first = try #require(model.lastBackupURL)
+    model.setSubtitleFontScale(1.3)
+    model.setSubtitleWrapCharacters(45)
+    await model.backupSchedule?.value
+    await model.backupTask?.value
+    let last = try #require(model.lastBackupURL)
+    #expect(first != last)
+    let archive = try await Task.detached { try BackupFiles.read(last) }.value
+    #expect(
+      archive.settings.subtitleFontScale == 1.3 && archive.settings.subtitleWrapCharacters == 45)
     model.setAutomaticBackup(false)
   }
 

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -118,4 +119,36 @@ struct BackupTests {
     }
     #expect(FileManager.default.fileExists(atPath: output.0.path))
   }
+  @Test func olderBackupsUseDefaultSubtitleAppearanceWithoutLosingOtherSettings() throws {
+    var settings = AppSettings()
+    settings.advancedMode = true
+    let data = try BackupArchive(settings: settings, library: data()).encoded()
+    var envelope = try #require(
+      PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+    let originalPayload = try #require(envelope["payload"] as? Data)
+    var payload = try #require(
+      PropertyListSerialization.propertyList(from: originalPayload, format: nil) as? [String: Any])
+    var oldSettings = try #require(payload["settings"] as? [String: Any])
+    for key in [
+      "subtitleFontScale", "liveSubtitleFontScale", "subtitleWrapCharacters",
+      "liveSubtitleWrapCharacters",
+    ] {
+      oldSettings.removeValue(forKey: key)
+    }
+    payload["settings"] = oldSettings
+    let bytes = try PropertyListSerialization.data(
+      fromPropertyList: payload, format: .binary, options: 0)
+    envelope["payload"] = bytes
+    envelope["checksum"] = Data(SHA256.hash(data: bytes))
+    let legacy = try PropertyListSerialization.data(
+      fromPropertyList: envelope, format: .binary, options: 0)
+    let restored = try BackupArchive.decode(legacy)
+    #expect(restored.settings.advancedMode)
+    #expect(
+      restored.settings.subtitleFontScale == 1 && restored.settings.liveSubtitleFontScale == 1)
+    #expect(
+      restored.settings.subtitleWrapCharacters == 80
+        && restored.settings.liveSubtitleWrapCharacters == 80)
+  }
+
 }

@@ -53,4 +53,17 @@ struct SettingsTests {
       from: Data(#"{"wordSpeechQuality":"future-quality","cacheMB":512}"#.utf8))
     #expect(decoded.wordSpeechQuality == .standard && decoded.cacheMB == 512)
   }
+  @Test func subtitleAppearanceDefaultsAreSliderMidpointsAndLegacySettingsRemainCompatible() throws {
+    let decoded = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+    #expect(decoded.subtitleWrapCharacters == (SubtitleAppearance.characterRange.lowerBound + SubtitleAppearance.characterRange.upperBound) / 2)
+    #expect(decoded.subtitleFontScale == (SubtitleAppearance.fontScaleRange.lowerBound + SubtitleAppearance.fontScaleRange.upperBound) / 2)
+    #expect(SubtitleAppearance.fontSize(current: true, scale: decoded.subtitleFontScale) == 26)
+    #expect(SubtitleAppearance.fontSize(current: false, scale: decoded.subtitleFontScale) == 21)
+    let bounded = try JSONDecoder().decode(AppSettings.self,
+      from: Data(#"{"subtitleWrapCharacters":-100,"liveSubtitleWrapCharacters":999,"subtitleFontScale":-1,"liveSubtitleFontScale":9}"#.utf8))
+    #expect(bounded.subtitleWrapCharacters == 20 && bounded.liveSubtitleWrapCharacters == 140)
+    #expect(bounded.subtitleFontScale == 0.65 && bounded.liveSubtitleFontScale == 1.35)
+    #expect(try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(bounded)) == bounded)
+  }
+
 }

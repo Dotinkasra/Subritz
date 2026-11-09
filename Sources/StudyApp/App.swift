@@ -40,8 +40,9 @@ struct MainView: View {
     VStack(spacing: 0) {
       HStack {
         if model.hasOpenVideo {
-          Button("閉じる", systemImage: "xmark") { model.confirmCloseVideo = true }
-            .labelStyle(.iconOnly).help(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
+          Button { model.confirmCloseVideo = true } label: {
+            HStack(spacing: 6) { Text("閉じる"); Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)) }
+          }.buttonStyle(SoftCloseButtonStyle()).help(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
             .accessibilityLabel(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
           Spacer()
           Text(model.grammarEnabledForVideo ? "AI文法解析 ON" : "AI文法解析 OFF")
@@ -55,12 +56,6 @@ struct MainView: View {
             .disabled(model.isChangingCacheDirectory)
           GrammarLoadOption(model: model)
           Spacer()
-        }
-        if model.ready {
-          Button("初期レイアウトに戻す", systemImage: "arrow.counterclockwise") {
-            model.setWorkspaceLayout(upper: 0.55, leading: 0.5)
-          }.labelStyle(.iconOnly).help("初期レイアウトに戻す")
-            .accessibilityLabel("初期レイアウトに戻す")
         }
         Button("英語の視聴時間", systemImage: "chart.bar.xaxis") {
           openWindow(id: "listening-statistics")
@@ -175,7 +170,7 @@ struct MainView: View {
         Text(model.stage).lineLimit(2)
         Spacer()
         if model.ready {
-          SubtitleSpacingControl(model: model)
+          SubtitleLayoutControls(model: model)
         }
         if model.ready {
           Text(model.isLiveSpeech ? "端末内の英語音声認識 · ローカル辞書" : "自動生成英語字幕 · ローカル辞書")
@@ -467,6 +462,8 @@ struct SubtitlePane: View {
     let width: CGFloat
     let height: CGFloat
     let spacing: Double
+    let fontScale: Double
+    let wrapCharacters: Int
     let userScrolling: Bool
   }
   var body: some View {
@@ -499,7 +496,8 @@ struct SubtitlePane: View {
           let standardRowHeight = max(60, min(110, (geometry.size.height - 16) / 3))
           // The compact floor leaves breathing room around the 26 pt current
           // line. Wrapped text and grammar keep their full intrinsic height.
-          let rowHeight = 48 + (standardRowHeight - 48) * model.subtitleRowSpacing
+          let minimumRowHeight = max(48, SubtitleAppearance.fontSize(current: true, scale: model.subtitleFontScale) + 22)
+          let rowHeight = minimumRowHeight + (max(minimumRowHeight, standardRowHeight) - minimumRowHeight) * model.subtitleRowSpacing
           ScrollView {
             VStack(spacing: 0) {
             LazyVStack(alignment: .leading, spacing: 8) {
@@ -533,6 +531,7 @@ struct SubtitlePane: View {
           .task(id: SubtitleFollowLayout(session: model.session, target: model.subtitleFollowLineID(),
             revision: model.liveSubtitleFollowRevision,
             width: geometry.size.width, height: geometry.size.height, spacing: model.subtitleRowSpacing,
+            fontScale: model.subtitleFontScale, wrapCharacters: model.subtitleWrapCharacters,
             userScrolling: model.isLiveSpeech && userScrolling)) {
             guard model.subtitleFollowLineID() != nil else { return }
             // Scroll after the new row/layout has entered the view tree, both
@@ -623,11 +622,11 @@ struct SubtitleLineView: View, Equatable {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
-      FlowLayout(spacing: 5) {
+      FlowLayout(spacing: 5, maximumCharacters: presentation.wrapCharacters) {
         ForEach(line.tokens) { token in
           VStack(spacing: 2) {
             SubtitleWordButton(
-              title: token.surface, size: current ? 26 : 21, current: current,
+              title: token.surface, size: SubtitleAppearance.fontSize(current: current, scale: presentation.fontScale), current: current,
               enabled: token.lexical,
               onClick: { model.toggleDictionarySelection(token) }, onDoubleClick: { model.seekToWord(token) },
               selectionID: token.id, selectionScope: presentation.session,
@@ -656,7 +655,8 @@ struct SubtitleLineView: View, Equatable {
                 }
               }
             }
-          }.onHover { inside in
+          }.layoutValue(key: SubtitleCharacterCount.self, value: token.surface.count)
+          .onHover { inside in
             if token.lexical {
               if inside { model.hover(token) } else { model.hover(nil, exiting: token.id) }
             }
@@ -773,39 +773,5 @@ struct Underline: View {
         p, with: .color(color(role)),
         style: StrokeStyle(lineWidth: 1.5, dash: role == .PREPOSITIONAL_PHRASE ? [4, 3] : []))
     }
-  }
-}
-struct FlowLayout: Layout {
-  var spacing: CGFloat = 5
-  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-    arrange(width: proposal.width ?? 1000, subviews: subviews).size
-  }
-  func placeSubviews(
-    in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
-  ) {
-    let layout = arrange(width: bounds.width, subviews: subviews)
-    for i in subviews.indices {
-      subviews[i].place(
-        at: CGPoint(x: bounds.minX + layout.points[i].x, y: bounds.minY + layout.points[i].y),
-        proposal: .unspecified)
-    }
-  }
-  func arrange(width: CGFloat, subviews: Subviews) -> (size: CGSize, points: [CGPoint]) {
-    var x: CGFloat = 0
-    var y: CGFloat = 0
-    var row: CGFloat = 0
-    var points: [CGPoint] = []
-    for view in subviews {
-      let size = view.sizeThatFits(.unspecified)
-      if x > 0 && x + size.width > width {
-        x = 0
-        y += row + spacing
-        row = 0
-      }
-      points.append(CGPoint(x: x, y: y))
-      x += size.width + spacing
-      row = max(row, size.height)
-    }
-    return (CGSize(width: width, height: y + row), points)
   }
 }

@@ -240,17 +240,6 @@ extension StudyModel {
       }
     }
   }
-  func setWorkspaceLayout(upper: Double? = nil, leading: Double? = nil) {
-    if let upper, upper.isFinite { settings.workspaceUpperFraction = min(0.95, max(0.05, upper)) }
-    if let leading, leading.isFinite {
-      settings.workspaceLeadingFraction = min(0.95, max(0.05, leading))
-    }
-    var saved = AppSettings.load(defaults: defaults)
-    saved.workspaceUpperFraction = settings.workspaceUpperFraction
-    saved.workspaceLeadingFraction = settings.workspaceLeadingFraction
-    saved.save(defaults: defaults)
-    markBackupChanged()
-  }
   func finishBackupBeforeQuitting() async {
     backupTerminating = true
     backupSchedule?.cancel()

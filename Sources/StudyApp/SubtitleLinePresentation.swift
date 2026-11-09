@@ -7,6 +7,8 @@ import StudyCore
 struct SubtitleLinePresentation: Equatable {
   let session: UUID
   let current: Bool
+  let fontScale: Double
+  let wrapCharacters: Int
   let emphasized: Set<UUID>
   let selected: Set<UUID>
   let searchRanges: [UUID: [NSRange]]
@@ -17,6 +19,8 @@ struct SubtitleLinePresentation: Equatable {
 
   @MainActor init(model: StudyModel, line: CaptionLine) {
     session = model.session
+    fontScale = model.subtitleFontScale
+    wrapCharacters = model.subtitleWrapCharacters
     current = line.index == model.currentLineIndex
     let ids = Set(line.tokens.map(\.id))
     var highlighted = Set(model.resolvedExpression?.tokens.map(\.id) ?? [])

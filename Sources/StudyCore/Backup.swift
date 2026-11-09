@@ -54,7 +54,11 @@ public struct BackupArchive: Codable, Sendable {
     guard createdAt.timeIntervalSince1970.isFinite, settings.timeout.isFinite,
       (5...3600).contains(settings.timeout), (1...1_048_576).contains(settings.cacheMB),
       settings.subtitleRowSpacing.isFinite, settings.liveSubtitleRowSpacing.isFinite,
-      settings.workspaceUpperFraction.isFinite, settings.workspaceLeadingFraction.isFinite
+      settings.workspaceUpperFraction.isFinite, settings.workspaceLeadingFraction.isFinite,
+      SubtitleAppearance.fontScaleRange.contains(settings.subtitleFontScale),
+      SubtitleAppearance.fontScaleRange.contains(settings.liveSubtitleFontScale),
+      SubtitleAppearance.characterRange.contains(settings.subtitleWrapCharacters),
+      SubtitleAppearance.characterRange.contains(settings.liveSubtitleWrapCharacters)
     else {
       throw AppFailure("バックアップの設定が正しくありません。現在のデータは変更していません。")
     }
