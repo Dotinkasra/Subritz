@@ -74,6 +74,7 @@ extension StudyModel {
         }
         try await storage.saveListeningSpans(Array(batch.values))
         listeningSaveError = nil
+        markBackupChanged()
       } catch {
         listeningBuffer.restore(Array(batch.values))
         listeningSaveError = "視聴時間を保存できませんでした：" + error.localizedDescription

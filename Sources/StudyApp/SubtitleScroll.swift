@@ -15,6 +15,7 @@ extension StudyModel {
     if isLiveSpeech { saved.liveSubtitleRowSpacing = value }
     else { saved.subtitleRowSpacing = value }
     saved.save(defaults: defaults)
+    markBackupChanged()
   }
 
   func toggleSubtitleScrollPin(at lineID: UUID? = nil) {

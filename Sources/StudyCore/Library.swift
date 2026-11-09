@@ -1,6 +1,6 @@
 import Foundation
 
-public struct VideoHistoryItem: Codable, Identifiable {
+public struct VideoHistoryItem: Codable, Sendable, Identifiable {
   public var video: Video
   public var lastOpened: Date
   public var id: String { video.id }
@@ -9,7 +9,7 @@ public struct VideoHistoryItem: Codable, Identifiable {
     self.lastOpened = lastOpened
   }
 }
-public struct FavoriteWord: Codable, Identifiable {
+public struct FavoriteWord: Codable, Sendable, Identifiable {
   public var id: String
   public var surface: String
   public var lemma: String?

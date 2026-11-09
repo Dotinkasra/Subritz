@@ -16,6 +16,7 @@ struct SettingsView: View {
           TextField("yt-dlp 実行ファイル", text: $model.settings.ytDlpPath)
           Text("空欄の場合は自動検出します。").font(.caption).foregroundStyle(.secondary)
         }
+        BackupSettings(model: model, window: window)
         LiveSpeechSettings(model: model)
         WordSpeechSettings(model: model)
         Section("動画キャッシュ") {
@@ -108,7 +109,7 @@ struct SettingsView: View {
           Text("5〜3600秒。解析サービスの変更は次の動画読み込みから反映します。モデル名はサービスごとに保存します。")
             .font(.caption).foregroundStyle(.secondary)
         }
-      }.formStyle(.grouped).textFieldStyle(.roundedBorder)
+      }.formStyle(.grouped).textFieldStyle(.roundedBorder).disabled(model.isRestoringBackup)
       Divider()
       HStack {
         Text(model.settingsMessage.isEmpty ? "変更は自動で保存されます" : model.settingsMessage)
@@ -120,6 +121,7 @@ struct SettingsView: View {
         }.keyboardShortcut(.cancelAction)
       }.padding(16)
     }.frame(width: 720, height: 780)
+      .modifier(BackupRestoreConfirmation(model: model))
       .onAppear { dictionaryBrowsers = DictionaryBrowser.installed() }
       .background(SettingsWindowTitle(window: window).frame(width: 0, height: 0))
       .onChange(of: model.settings) { old, _ in model.saveSettings(previous: old) }

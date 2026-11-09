@@ -8,14 +8,16 @@ import SwiftUI
   var body: some Scene {
     Window(appName, id: "main") {
       MainView(model: model).frame(minWidth: 1100, minHeight: 700)
+        .disabled(model.isRestoringBackup)
         .background(MainWindowLifecycle(model: model).frame(width: 0, height: 0))
         .onAppear { lifecycle.model = model }
     }.commands { SubritzCommands(model: model) }
     Window(appName + " — ライブラリ", id: "library") {
       LibraryView(model: model).frame(minWidth: 760, minHeight: 500)
+        .disabled(model.isRestoringBackup)
     }.defaultSize(width: 900, height: 620)
     Window("お気に入りをエクスポート", id: "favorite-export") {
-      FavoriteExportView(model: model)
+      FavoriteExportView(model: model).disabled(model.isRestoringBackup)
     }.windowResizability(.contentSize)
     Window("Subritz — 英語の視聴時間", id: "listening-statistics") {
       ListeningStatisticsView(study: model).equatable()
@@ -26,8 +28,12 @@ import SwiftUI
 struct MainView: View {
   @ObservedObject var model: StudyModel
   @State private var videoHidden = false
-  @State private var workspaceUpperFraction: CGFloat = 0.55
-  @State private var workspaceLeadingFraction: CGFloat = 0.5
+  private var workspaceUpperFraction: Binding<CGFloat> {
+    Binding(get: { CGFloat(model.settings.workspaceUpperFraction) }, set: { model.setWorkspaceLayout(upper: Double($0)) })
+  }
+  private var workspaceLeadingFraction: Binding<CGFloat> {
+    Binding(get: { CGFloat(model.settings.workspaceLeadingFraction) }, set: { model.setWorkspaceLayout(leading: Double($0)) })
+  }
   @Environment(\.openSettings) private var openSettings
   @Environment(\.openWindow) private var openWindow
   var body: some View {
@@ -52,8 +58,7 @@ struct MainView: View {
         }
         if model.ready {
           Button("初期レイアウトに戻す", systemImage: "arrow.counterclockwise") {
-            workspaceUpperFraction = 0.55
-            workspaceLeadingFraction = 0.5
+            model.setWorkspaceLayout(upper: 0.55, leading: 0.5)
           }.labelStyle(.iconOnly).help("初期レイアウトに戻す")
             .accessibilityLabel("初期レイアウトに戻す")
         }
@@ -77,8 +82,8 @@ struct MainView: View {
       Divider()
       if !model.hasOpenVideo { LiveSpeechLaunchCard(model: model) }
       if model.ready, let document = model.document {
-        WorkspaceSplitView(upperFraction: $workspaceUpperFraction,
-          leadingFraction: $workspaceLeadingFraction) {
+        WorkspaceSplitView(upperFraction: workspaceUpperFraction,
+          leadingFraction: workspaceLeadingFraction) {
           if model.isLiveSpeech {
             LiveSpeechPanel(model: model).frame(maxWidth: .infinity)
           } else {

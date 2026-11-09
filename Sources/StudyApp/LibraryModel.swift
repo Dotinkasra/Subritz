@@ -77,6 +77,7 @@ extension StudyModel {
         guard let library else { throw AppFailure("ライブラリが準備できていません") }
         try await operation(library)
         try await refreshLibrary()
+        markBackupChanged()
       } catch { libraryError = "ライブラリを保存できませんでした：" + error.localizedDescription }
     }
   }
@@ -136,7 +137,7 @@ extension StudyModel {
     requestLibraryPlayback(video: item.video, at: item.time)
   }
   @discardableResult func requestLibraryPlayback(video: Video, at time: Double) -> Bool {
-    guard !isChangingCacheDirectory, time.isFinite, time >= 0 else { return false }
+    guard !isRestoringBackup, !isChangingCacheDirectory, time.isFinite, time >= 0 else { return false }
     do { _ = try YouTubeURL.id(video.watchURL) } catch {
       libraryError = error.localizedDescription
       return false
@@ -149,7 +150,7 @@ extension StudyModel {
     return openLibraryPlayback(request)
   }
   @discardableResult func confirmLibraryPlayback(_ target: LibraryPlaybackRequest? = nil) -> Bool {
-    guard let request = target ?? pendingLibraryPlayback, !isChangingCacheDirectory else { return false }
+    guard let request = target ?? pendingLibraryPlayback, !isRestoringBackup, !isChangingCacheDirectory else { return false }
     pendingLibraryPlayback = nil
     if ready, document?.video.id == request.video.id {
       releaseDictionaryPin()

@@ -81,6 +81,23 @@ import SwiftUI
   var library: LibraryStore?
   var libraryStartup: Task<LibraryStore, Error>?
   var libraryOperation: Task<Void, Never>?
+  @Published var backupPreferences = BackupPreferences()
+  @Published var backupStatus = ""
+  @Published var backupError: String?
+  @Published var backupRestorePrompt: String?
+  @Published var isRestoringBackup = false
+  @Published var backupTask: Task<Void, Never>?
+  @Published var backupReadTask: Task<Void, Never>?
+  @Published var lastBackupURL: URL?
+  @Published var lastRecoveryURL: URL?
+  var pendingBackupRestore: BackupArchive?
+  var backupRestoreTask: Task<Void, Never>?
+  var backupSchedule: Task<Void, Never>?
+  var backupRevision: UInt64 = 0
+  var backupSavedRevision: UInt64 = 0
+  var backupTerminating = false
+  var backupRecoveryDirectoryOverride: URL?
+  var backupDelayOverride: Double?
   var listeningBuffer = ListeningBuffer()
   var playbackListening = PlaybackListeningTracker()
   var speechListening = SpeechListeningTracker()
@@ -130,6 +147,8 @@ import SwiftUI
   init(prepareStorage: Bool = true, defaults: UserDefaults = .standard) {
     self.defaults = defaults
     settings = AppSettings.load(defaults: defaults)
+    backupPreferences = BackupPreferences.load(defaults)
+    if let path = defaults.string(forKey: "lastRecoveryBackupPath") { lastRecoveryURL = URL(fileURLWithPath: path) }
     liveTranscriptCache.setLimit(settings.liveSpeechCacheMB * 1024 * 1024)
     bridge.onTime = { [weak self] t, d, s in self?.update(time: t, duration: d, state: s) }
     bridge.onListeningSample = { [weak self] sample in self?.recordListeningPlayback(sample) }
@@ -138,6 +157,7 @@ import SwiftUI
     let directory = settings.cacheURL
     storageTask = Task.detached { (try StudyStore(directory: directory), try EijiroProvider()) }
     startLibrary()
+    if backupPreferences.enabled { markBackupChanged(immediate: true) }
     Task {
       do {
         let stores = try await storageTask!.value
@@ -148,7 +168,7 @@ import SwiftUI
     }
   }
   @discardableResult func load(startTime: Double = 0) -> Bool {
-    guard !isChangingCacheDirectory, startTime.isFinite, startTime >= 0 else { return false }
+    guard !isRestoringBackup, !isChangingCacheDirectory, startTime.isFinite, startTime >= 0 else { return false }
     phase = .validatingURL
     let id: String
     do { id = try YouTubeURL.id(url) } catch {
@@ -748,6 +768,7 @@ import SwiftUI
       return
     }
     settings.save(defaults: defaults)
+    markBackupChanged()
     if previous?.liveSpeechCacheMB != settings.liveSpeechCacheMB {
       liveTranscriptCache.setLimit(max(1, min(64, settings.liveSpeechCacheMB)) * 1024 * 1024)
       refreshLiveSpeechCache()
@@ -773,6 +794,7 @@ import SwiftUI
     var saved = AppSettings.load(defaults: defaults)
     saved.aiGrammarEnabled = enabled
     saved.save(defaults: defaults)
+    markBackupChanged()
   }
   func setAdvancedMode(_ enabled: Bool) {
     // Display only: keep the current lookup, cached meanings and playback untouched.
@@ -780,6 +802,7 @@ import SwiftUI
     var saved = AppSettings.load(defaults: defaults)
     saved.advancedMode = enabled
     saved.save(defaults: defaults)
+    markBackupChanged()
   }
   func scheduleAPIKeySave(_ key: String) {
     pendingAPIKey = key
@@ -838,6 +861,7 @@ import SwiftUI
         if error?.hasPrefix("永続データを開けませんでした") == true { error = nil }
         settings.cacheDirectory = path
         settings.save(defaults: defaults)
+        markBackupChanged()
         await refreshStorage()
         cacheMessage = "保存先を変更しました。既存のキャッシュは元の場所に残ります。"
       } catch { cacheMessage = "保存先を変更できませんでした：" + error.localizedDescription }

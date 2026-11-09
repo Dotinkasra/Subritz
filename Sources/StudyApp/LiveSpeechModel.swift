@@ -15,14 +15,14 @@ extension StudyModel {
     return false
   }
   func startLiveSpeech() {
-    guard !hasOpenVideo, !isChangingCacheDirectory else { return }
+    guard !isRestoringBackup, !hasOpenVideo, !isChangingCacheDirectory else { return }
     closeVideo()
     let id = liveTranscriptCache.begin(source: settings.speechAudioSource)
     openLiveSpeechSession(id)
     configureLiveSpeech(listen: true)
   }
   func restoreLiveSpeech(_ id: UUID) {
-    guard !hasOpenVideo, liveTranscriptCache.session(id) != nil else { return }
+    guard !isRestoringBackup, !hasOpenVideo, liveTranscriptCache.session(id) != nil else { return }
     closeVideo()
     liveTranscriptCache.activate(id)
     openLiveSpeechSession(id)
@@ -43,12 +43,14 @@ extension StudyModel {
     guard settings.speechAudioSource != source else { return }
     settings.speechAudioSource = source
     settings.save(defaults: defaults)
+    markBackupChanged()
     if isLiveSpeech, liveSpeechState == .listening { configureLiveSpeech(listen: true) }
   }
   func setSpeechMicrophone(_ id: String) {
     guard settings.speechMicrophoneID != id else { return }
     settings.speechMicrophoneID = id
     settings.save(defaults: defaults)
+    markBackupChanged()
     if isLiveSpeech, settings.speechAudioSource == .microphone, liveSpeechState == .listening {
       configureLiveSpeech(listen: true)
     }
