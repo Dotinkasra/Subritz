@@ -18,6 +18,7 @@ struct SettingsTests {
       #expect(!settings.advancedMode)
       #expect(settings.dictionaryBrowser == "system")
       #expect(settings.realtimePronunciationEnabled)
+      #expect(settings.wordSpeechQuality == .standard)
       #expect(settings.subtitleRowSpacing == 1 && settings.liveSubtitleRowSpacing == 1)
     }
   }
@@ -29,6 +30,7 @@ struct SettingsTests {
     settings.aiGrammarEnabled = false
     settings.advancedMode = true
     settings.realtimePronunciationEnabled = false
+    settings.wordSpeechQuality = .premium
     settings.dictionaryBrowser = "browser:com.apple.Safari"
     settings.subtitleRowSpacing = 0.75
     settings.liveSubtitleRowSpacing = 0.2
@@ -45,5 +47,10 @@ struct SettingsTests {
     let decoded = try JSONDecoder().decode(AppSettings.self,
       from: Data(#"{"subtitleRowSpacing":-2,"liveSubtitleRowSpacing":5}"#.utf8))
     #expect(decoded.subtitleRowSpacing == 0 && decoded.liveSubtitleRowSpacing == 1)
+  }
+  @Test func unknownSpeechQualityFallsBackWithoutDiscardingOtherPreferences() throws {
+    let decoded = try JSONDecoder().decode(AppSettings.self,
+      from: Data(#"{"wordSpeechQuality":"future-quality","cacheMB":512}"#.utf8))
+    #expect(decoded.wordSpeechQuality == .standard && decoded.cacheMB == 512)
   }
 }

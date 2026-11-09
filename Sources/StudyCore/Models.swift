@@ -122,6 +122,18 @@ public enum YouTubeURL {
     return value
   }
 }
+public enum WordSpeechQuality: String, Codable, CaseIterable, Sendable, Identifiable {
+  case standard, enhanced, premium
+  public var id: String { rawValue }
+  public var title: String {
+    switch self {
+    case .standard: return "標準"
+    case .enhanced: return "拡張"
+    case .premium: return "プレミアム"
+    }
+  }
+}
+
 public struct AppSettings: Codable, Sendable, Equatable {
   public var ytDlpPath = ""
   public var codexPath = ""
@@ -134,6 +146,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
   public var aiGrammarEnabled = true
   public var advancedMode = false
   public var realtimePronunciationEnabled = true
+  public var wordSpeechQuality = WordSpeechQuality.standard
   public var subtitleRowSpacing = 1.0
   public var liveSubtitleRowSpacing = 1.0
   public var speechAudioSource = SpeechAudioSource.system
@@ -165,7 +178,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
   enum CodingKeys: String, CodingKey {
     case ytDlpPath, codexPath, dictionary, provider, baseURL, localModel, codexModel,
       cacheDirectory, timeout, cacheMB, localConcurrency, codexConcurrency, aiGrammarEnabled,
-      advancedMode, dictionaryBrowser, realtimePronunciationEnabled,
+      advancedMode, dictionaryBrowser, realtimePronunciationEnabled, wordSpeechQuality,
       speechAudioSource, speechMicrophoneID, liveSpeechCacheMB,
       subtitleRowSpacing, liveSubtitleRowSpacing
   }
@@ -185,6 +198,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
     advancedMode = try c.decodeIfPresent(Bool.self, forKey: .advancedMode) ?? advancedMode
     realtimePronunciationEnabled = try c.decodeIfPresent(Bool.self, forKey: .realtimePronunciationEnabled)
       ?? realtimePronunciationEnabled
+    wordSpeechQuality = (try? c.decodeIfPresent(WordSpeechQuality.self, forKey: .wordSpeechQuality))
+      ?? wordSpeechQuality
     subtitleRowSpacing = min(1, max(0, try c.decodeIfPresent(Double.self, forKey: .subtitleRowSpacing) ?? subtitleRowSpacing))
     liveSubtitleRowSpacing = min(1, max(0, try c.decodeIfPresent(Double.self, forKey: .liveSubtitleRowSpacing) ?? liveSubtitleRowSpacing))
     speechAudioSource = try c.decodeIfPresent(SpeechAudioSource.self, forKey: .speechAudioSource) ?? speechAudioSource

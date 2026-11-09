@@ -240,6 +240,8 @@ struct DictionaryPane: View {
           Text(model.settings.dictionary == "eijiro" ? "英辞郎" : "macOS 辞書").font(.caption)
             .foregroundStyle(.secondary)
         }
+        WordSpeechButton(word: model.displayedToken.flatMap { $0.lexical ? $0.surface : nil } ?? "",
+          session: model.session, quality: model.settings.wordSpeechQuality)
         CambridgeLookupButton(word: model.displayedToken.flatMap { $0.lexical ? $0.surface : nil } ?? "",
           browser: model.settings.dictionaryBrowser, label: "調べる")
         Button {

@@ -23,7 +23,13 @@ struct DictionaryBodyText: NSViewRepresentable {
   }
 }
 
-final class DictionaryBodyTextView: NSTextView {
+class DictionaryBodyTextView: NSTextView {
+  // Measuring a SwiftUI proposal must not mutate the text view's live layout.
+  // The measurement graph has no view and receives the same styled text.
+  private let measurementStorage = NSTextStorage()
+  private let measurementLayout = NSLayoutManager()
+  private let measurementContainer = NSTextContainer(
+    size: CGSize(width: 600, height: CGFloat.greatestFiniteMagnitude))
   private var contentFontSize: CGFloat = 0
   private var contentLineSpacing: CGFloat = 0
   private var measuredSize: CGSize?
@@ -37,6 +43,10 @@ final class DictionaryBodyTextView: NSTextView {
     storage.addLayoutManager(layout)
     layout.addTextContainer(container)
     super.init(frame: .zero, textContainer: container)
+    measurementStorage.addLayoutManager(measurementLayout)
+    measurementLayout.addTextContainer(measurementContainer)
+    measurementLayout.backgroundLayoutEnabled = false
+    measurementContainer.lineFragmentPadding = 0
     container.lineFragmentPadding = 0
     container.widthTracksTextView = false
     container.heightTracksTextView = false
@@ -60,15 +70,14 @@ final class DictionaryBodyTextView: NSTextView {
   }
 
   override func layout() {
-    super.layout()
     synchronizeViewportWidth()
+    super.layout()
   }
 
   private func synchronizeViewportWidth() {
     guard bounds.width > 0, bounds.width.isFinite,
       textContainer?.containerSize.width != bounds.width else { return }
-    _ = fittingSize(width: bounds.width)
-    invalidateIntrinsicContentSize()
+    textContainer?.containerSize = CGSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude)
   }
 
   func update(text: String, fontSize: CGFloat, lineSpacing: CGFloat, blocks: [DictionaryBlock] = []) {
@@ -112,6 +121,7 @@ final class DictionaryBodyTextView: NSTextView {
         .paragraphStyle: paragraph,
       ]))
     }
+    measurementStorage.setAttributedString(body)
     textStorage?.setAttributedString(body)
     measuredSize = nil
   }
@@ -122,16 +132,12 @@ final class DictionaryBodyTextView: NSTextView {
     let width = proposedWidth.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
       ?? measuredSize?.width ?? 600
     if let measuredSize, measuredSize.width == width { return measuredSize }
-    guard let textContainer, let layoutManager else { return .zero }
-    textContainer.containerSize = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-    layoutManager.ensureLayout(for: textContainer)
-    let rect = layoutManager.usedRect(for: textContainer)
-    let height = ceil(max(rect.maxY, layoutManager.extraLineFragmentRect.maxY))
+    measurementContainer.containerSize = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+    measurementLayout.ensureLayout(for: measurementContainer)
+    let rect = measurementLayout.usedRect(for: measurementContainer)
+    let height = ceil(max(rect.maxY, measurementLayout.extraLineFragmentRect.maxY))
     let size = CGSize(width: width, height: height)
     measuredSize = size
-    // SwiftUI may probe another width after assigning the frame without
-    // assigning that same frame again. Restore the viewport before drawing.
-    needsLayout = true
     return size
   }
 }

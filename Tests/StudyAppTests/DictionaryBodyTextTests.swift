@@ -4,6 +4,22 @@ import StudyCore
 
 @testable import StudyApp
 
+private final class LayoutObservedDictionaryTextView: DictionaryBodyTextView {
+  var layoutRequests = 0
+  var intrinsicSizeInvalidations = 0
+  override var needsLayout: Bool {
+    get { super.needsLayout }
+    set {
+      if newValue { layoutRequests += 1 }
+      super.needsLayout = newValue
+    }
+  }
+  override func invalidateIntrinsicContentSize() {
+    intrinsicSizeInvalidations += 1
+    super.invalidateIntrinsicContentSize()
+  }
+}
+
 @MainActor struct DictionaryBodyTextTests {
   @Test func structuralTypographyKeepsEveryParagraphSelectable() throws {
     let blocks: [DictionaryBlock] = [
@@ -74,5 +90,32 @@ import StudyCore
       #expect(view.selectedRange() == selection)
       #expect(!view.isVerticallyResizable)
     }
+  }
+
+  @Test func measuringARevealedDefinitionDoesNotInvalidateItsHostLayout() throws {
+    let view = LayoutObservedDictionaryTextView()
+    let text = String(repeating: "自作の語義。A paper robot carries a blue lantern across the quiet garden beside a copper clock.\n", count: 80)
+    view.update(text: text, fontSize: 14, lineSpacing: 5)
+    view.setFrameSize(CGSize(width: 480, height: 300))
+    view.layout()
+    let container = try #require(view.textContainer)
+    let drawingSize = container.containerSize
+    view.layoutRequests = 0
+    view.intrinsicSizeInvalidations = 0
+    // SwiftUI probes multiple widths when the mask is replaced with selectable
+    // text. Those probes must neither resize its drawing container nor trigger
+    // another host layout/constraint pass.
+    for width: CGFloat in [600, 240, 480, 900, 480] {
+      #expect(view.fittingSize(width: width).height > 0)
+      #expect(container.containerSize == drawingSize)
+      #expect(view.layoutRequests == 0 && view.intrinsicSizeInvalidations == 0)
+    }
+    let range = NSRange(location: 0, length: 4)
+    view.setSelectedRange(range)
+    view.setFrameSize(CGSize(width: 360, height: 500))
+    view.layout()
+    #expect(container.containerSize.width == 360 && view.selectedRange() == range)
+    #expect(view.fittingSize(width: 180).height > view.fittingSize(width: 900).height)
+    #expect(container.containerSize.width == 360)
   }
 }
