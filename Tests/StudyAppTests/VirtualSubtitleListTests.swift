@@ -48,6 +48,17 @@ import Testing
     model.closeSubtitleSearch()
     update(narrow, revision: 2)
     #expect(scroll.contentView.bounds.intersects(table.rect(ofRow: newTarget)))
+    model.suspendVideoSubtitleFollowing()
+    scroll.contentView.scroll(to: .zero)
+    let nextWord = try #require(timeline.tokens.first { $0.surface == "garden" })
+    model.update(time: (nextWord.startTime + nextWord.endTime) / 2, duration: 10, state: 1)
+    update(narrow, revision: 2)
+    #expect(scroll.contentView.bounds.origin.y == 0)
+    #expect(!model.videoSubtitleAutoFollow && model.currentToken?.id == nextWord.id)
+    model.resumeVideoSubtitleFollowing()
+    update(narrow, revision: 2)
+    let resumedRow = try #require(narrow.tokenRows[nextWord.id]) + 1
+    #expect(scroll.contentView.bounds.intersects(table.rect(ofRow: resumedRow)))
   }
 
   @Test func pendingCharacterInputDoesNotRecreateAlreadyReflowedWordControls() throws {

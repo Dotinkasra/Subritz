@@ -19,6 +19,7 @@ import SwiftUI
   @Published var currentSentence: Sentence?
   @Published var currentLineIndex = 0
   @Published var subtitleScrollPinned = false
+  @Published var videoSubtitleAutoFollow = true
   @Published var subtitlePinnedLineID: UUID?
   @Published var subtitlePinnedTokenID: UUID?
   var subtitlePlaybackAnchorID: UUID?
@@ -194,6 +195,7 @@ import SwiftUI
     subtitlePinnedLineID = nil
     subtitlePinnedTokenID = nil
     subtitlePlaybackAnchorID = nil
+    videoSubtitleAutoFollow = true
     let sid = session
     ready = false
     loading = true
@@ -724,6 +726,7 @@ import SwiftUI
     subtitlePinnedLineID = nil
     subtitlePinnedTokenID = nil
     subtitlePlaybackAnchorID = nil
+    videoSubtitleAutoFollow = true
     saveExitTimestamp()
     endLiveSpeech()
     loadTask?.cancel()

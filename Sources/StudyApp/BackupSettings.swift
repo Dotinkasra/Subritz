@@ -7,7 +7,7 @@ struct BackupSettings: View {
   @ObservedObject var model: StudyModel
   let window: WindowReference
   var body: some View {
-    Section("バックアップ（iCloud Drive対応）") {
+    Section {
       Toggle(
         "自動バックアップを有効にする",
         isOn: Binding(
@@ -66,19 +66,17 @@ struct BackupSettings: View {
         Button("復元前のバックアップを表示") { NSWorkspace.shared.activateFileViewerSelecting([recovery]) }
           .disabled(model.backupBusy)
       }
-      Text(
-        "初回は保存先にiCloud Drive内のフォルダを選んでください。変更をまとめて自動保存し、変更が続く間は約5分ごとに更新します。自動保存は最新5件を保持し、手動保存分は残します。"
-      )
-      .font(.caption).foregroundStyle(.secondary)
-      Text(
-        "学習データ・設定・カラムのレイアウトが対象です。キャッシュ・辞書データ本体・音声データ・APIキーは含みません。iCloudへの転送はmacOSが行うため、最終保存日時は転送完了日時とは異なります。"
-      )
-      .font(.caption).foregroundStyle(.secondary)
       if !model.backupStatus.isEmpty {
         Text(model.backupStatus).font(.caption).foregroundStyle(.secondary)
       }
       if let error = model.backupError {
         Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+      }
+    } header: {
+      HStack {
+        Text("バックアップ（iCloud Drive対応）")
+        SettingsInfoButton(title: "バックアップについて", message:
+          "初回は保存先にiCloud Drive内のフォルダを選んでください。変更をまとめて自動保存し、変更が続く間は約5分ごとに更新します。自動保存は最新5件を保持し、手動保存分は残します。\n\n学習データ・設定・カラムのレイアウトが対象です。キャッシュ・辞書データ本体・音声データ・APIキーは含みません。iCloudへの転送はmacOSが行うため、最終保存日時は転送完了日時とは異なります。")
       }
     }
   }

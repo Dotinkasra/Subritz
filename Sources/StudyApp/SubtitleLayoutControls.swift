@@ -7,13 +7,6 @@ struct SubtitleLayoutControls: View {
   @State private var confirmingReset = false
   var body: some View {
     HStack(spacing: 6) {
-      Button {
-        confirmingReset = true
-      } label: {
-        Image(systemName: "arrow.counterclockwise")
-      }
-      .help("カラム配置と字幕表示を初期レイアウトに戻す")
-      .accessibilityLabel("初期レイアウトに戻す")
       Button("表示調整", systemImage: "slider.horizontal.3") { showingAdjustments.toggle() }
         .help("字幕の行間・1行の文字数・文字サイズを調整")
         .popover(isPresented: $showingAdjustments, arrowEdge: .bottom) {
@@ -59,9 +52,11 @@ struct SubtitleLayoutControls: View {
               )
               .accessibilityLabel("字幕の行間")
             }
-            Text("文字サイズと文字数はスライダーの中央が初期値です。元の字幕の区切りをまたいで折り返します。文字数を最大にすると、固定の文字数制限を外して画面幅まで使います。設定はYouTubeと音声認識で別々に保存します。")
-              .font(.caption).foregroundStyle(.secondary)
             HStack {
+              Button("初期レイアウトに戻す", systemImage: "arrow.counterclockwise") {
+                showingAdjustments = false
+                confirmingReset = true
+              }.help("カラム配置と字幕表示を初期レイアウトに戻す")
               Spacer()
               Button("完了") { showingAdjustments = false }.keyboardShortcut(.cancelAction)
             }

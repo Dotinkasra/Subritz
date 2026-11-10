@@ -99,17 +99,19 @@ struct LiveSpeechPanel: View {
 struct LiveSpeechSettings: View {
   @ObservedObject var model: StudyModel
   var body: some View {
-    Section("リアルタイム音声認識") {
+    Section {
       LiveSpeechInputs(model: model)
       Picker("英文キャッシュの上限", selection: $model.settings.liveSpeechCacheMB) {
         ForEach([1, 4, 8, 16, 32, 64], id: \.self) { Text("\($0) MB").tag($0) }
       }
       Text("使用量：\(model.liveSpeechCacheBytes.formatted()) バイト（英文テキスト）")
         .font(.caption).foregroundStyle(.secondary)
-      Text("キャッシュはメモリ内だけに保持し、上限を超えると古い英文から削除します。アプリ終了時に全削除されます。音声は保存しません。")
-        .font(.caption).foregroundStyle(.secondary)
-      Text("AppleのSpeechAnalyzerを使用します。macOS 26以降の対応Macが必要です。モデルはmacOSが管理するため、パスの指定は不要です。")
-        .font(.caption).foregroundStyle(.secondary)
+    } header: {
+      HStack {
+        Text("リアルタイム音声認識")
+        SettingsInfoButton(title: "音声認識とキャッシュについて", message:
+          "キャッシュはメモリ内だけに保持し、上限を超えると古い英文から削除します。アプリ終了時に全削除されます。音声は保存しません。\n\nAppleのSpeechAnalyzerを使用します。macOS 26以降の対応Macが必要です。モデルはmacOSが管理するため、パスの指定は不要です。")
+      }
     }
   }
 }

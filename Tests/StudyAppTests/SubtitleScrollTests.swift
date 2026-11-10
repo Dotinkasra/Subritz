@@ -4,6 +4,35 @@ import StudyCore
 @testable import StudyApp
 
 @MainActor struct SubtitleScrollTests {
+  @Test func manualVideoScrollSuspendsFollowingUntilResumeWithoutChangingPlayback() throws {
+    let model = try SubtitleSearchInteractionTests().fixture()
+    defer { model.closeVideo() }
+    model.update(time: 0.01, duration: 10, state: 1)
+    model.suspendVideoSubtitleFollowing()
+    #expect(!model.videoSubtitleAutoFollow && model.subtitleFollowLineID() == nil)
+    model.update(time: 9.1, duration: 10, state: 1)
+    #expect(model.playing && model.currentLineIndex == 2 && model.currentToken != nil)
+    #expect(model.subtitleFollowLineID() == nil && model.bridge.pendingSeekTime == nil)
+    model.resumeVideoSubtitleFollowing()
+    #expect(model.videoSubtitleAutoFollow && model.subtitleFollowLineID() == model.subtitleLines[2].id)
+    #expect(model.time == 9.1 && model.bridge.pendingSeekTime == nil)
+    model.suspendVideoSubtitleFollowing()
+    model.closeVideo()
+    #expect(model.videoSubtitleAutoFollow)
+  }
+  @Test func pinAndLiveFollowingKeepTheirOwnExplicitBehavior() throws {
+    let model = try SubtitleSearchInteractionTests().fixture()
+    defer { model.closeVideo() }
+    model.suspendVideoSubtitleFollowing()
+    model.toggleSubtitleScrollPin()
+    model.resumeVideoSubtitleFollowing()
+    #expect(model.subtitleScrollPinned && model.subtitleFollowLineID() == nil)
+    model.toggleSubtitleScrollPin()
+    #expect(model.subtitleFollowLineID() != nil)
+    model.liveSpeechSessionID = UUID()
+    model.suspendVideoSubtitleFollowing()
+    #expect(model.videoSubtitleAutoFollow && model.liveSubtitleAutoFollow)
+  }
   @Test func pinStopsFollowingWithoutStoppingPlaybackWordOrLineUpdates() throws {
     let model = try SubtitleSearchInteractionTests().fixture()
     defer { model.closeVideo() }

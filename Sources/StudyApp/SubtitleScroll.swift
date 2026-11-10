@@ -31,6 +31,7 @@ extension StudyModel {
       subtitlePinnedLineID = nil
       subtitlePinnedTokenID = nil
       if isLiveSpeech { liveSubtitleAutoFollow = true }
+      else { videoSubtitleAutoFollow = true }
     }
   }
 
@@ -54,10 +55,20 @@ extension StudyModel {
   }
   var liveSubtitleFollowRevision: Int? { followsLiveSubtitles ? liveSubtitleRevision : nil }
 
+  func suspendVideoSubtitleFollowing() {
+    guard ready, !isLiveSpeech, !subtitleScrollPinned else { return }
+    if videoSubtitleAutoFollow { videoSubtitleAutoFollow = false }
+  }
+  func resumeVideoSubtitleFollowing() {
+    guard ready, !isLiveSpeech else { return }
+    videoSubtitleAutoFollow = true
+  }
+
   func subtitleFollowLineID(ignoringSearch: Bool = false) -> UUID? {
     guard !subtitleScrollPinned, !draggingDictionarySelection,
       ignoringSearch || !browsingSubtitleSearch else { return nil }
     if isLiveSpeech { return liveSubtitleAutoFollow ? subtitleLines.last?.id : nil }
+    guard videoSubtitleAutoFollow else { return nil }
     guard subtitleLines.indices.contains(currentLineIndex) else { return nil }
     return subtitleLines[currentLineIndex].id
   }
