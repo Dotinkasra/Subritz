@@ -516,6 +516,12 @@ struct SubtitlePane: View {
           // line. Wrapped text and grammar keep their full intrinsic height.
           let minimumRowHeight = max(48, SubtitleAppearance.fontSize(current: true, scale: model.subtitleFontScale) + 22)
           let rowHeight = minimumRowHeight + (max(minimumRowHeight, standardRowHeight) - minimumRowHeight) * model.subtitleRowSpacing
+          Group {
+          if !model.grammarEnabledForVideo && !model.isLiveSpeech {
+            VirtualSubtitleList(model: model, layout: display.layout, revision: display.revision,
+              rowHeight: rowHeight, viewportHeight: geometry.size.height,
+              onVisibleRow: { visibleLineID = $0 })
+          } else {
           ScrollView {
             VStack(spacing: 0) {
             LazyVStack(alignment: .leading, spacing: 8) {
@@ -548,13 +554,6 @@ struct SubtitlePane: View {
           .scrollPosition(id: Binding(get: { nil as UUID? },
             set: { visibleLineID = $0 }), anchor: .center)
           .defaultScrollAnchor(model.followsLiveSubtitles && !userScrolling ? .bottom : nil, for: .sizeChanges)
-          .task(id: ReflowInputs(session: model.session, sourceRevision: model.subtitleTimelineRevision,
-            width: geometry.size.width, characters: model.subtitleWrapCharacters,
-            fontScale: model.subtitleFontScale, grammar: model.grammarEnabledForVideo)) {
-            await display.rebuild(lines: model.subtitleLines, width: max(1, geometry.size.width - 36),
-              characters: model.subtitleWrapCharacters, fontScale: model.subtitleFontScale,
-              grammar: model.grammarEnabledForVideo, session: model.session)
-          }
           .task(id: SubtitleFollowLayout(session: model.session, target: displayFollowRowID,
             displayRevision: display.revision, revision: model.liveSubtitleFollowRevision,
             width: geometry.size.width, height: geometry.size.height, spacing: model.subtitleRowSpacing,
@@ -613,6 +612,15 @@ struct SubtitlePane: View {
           .onChange(of: model.subtitleSearchQuery) { showSearchResult(proxy) }
           .onChange(of: model.browsingSubtitleSearch) { _, browsing in
             if browsing { showSearchResult(proxy) } else { follow(proxy) }
+          }
+          }
+          }
+          .task(id: ReflowInputs(session: model.session, sourceRevision: model.subtitleTimelineRevision,
+            width: geometry.size.width, characters: model.subtitleWrapCharacters,
+            fontScale: model.subtitleFontScale, grammar: model.grammarEnabledForVideo)) {
+            await display.rebuild(lines: model.subtitleLines, width: max(1, geometry.size.width - 36),
+              characters: model.subtitleWrapCharacters, fontScale: model.subtitleFontScale,
+              grammar: model.grammarEnabledForVideo, session: model.session)
           }
         }
       }
