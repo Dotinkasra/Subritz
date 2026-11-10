@@ -17,10 +17,10 @@ struct SubtitleLinePresentation: Equatable {
   let analyses: [UUID: Analysis]
   let currentSentence: Sentence?
 
-  @MainActor init(model: StudyModel, line: CaptionLine, current displayCurrent: Bool? = nil, grammarNearby: Bool? = nil) {
+  @MainActor init(model: StudyModel, line: CaptionLine, current displayCurrent: Bool? = nil, grammarNearby: Bool? = nil, wrapCharacters displayWrap: Int? = nil) {
     session = model.session
     fontScale = model.subtitleFontScale
-    wrapCharacters = model.subtitleWrapCharacters == SubtitleAppearance.characterRange.upperBound ? Int.max : model.subtitleWrapCharacters
+    wrapCharacters = displayWrap ?? (model.subtitleWrapCharacters == SubtitleAppearance.characterRange.upperBound ? Int.max : model.subtitleWrapCharacters)
     current = displayCurrent ?? (line.index == model.currentLineIndex)
     let ids = Set(line.tokens.map(\.id))
     var highlighted = Set(model.resolvedExpression?.tokens.map(\.id) ?? [])
