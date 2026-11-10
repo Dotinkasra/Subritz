@@ -7,6 +7,8 @@ import StudyCore
 struct SubtitleLinePresentation: Equatable {
   let session: UUID
   let current: Bool
+  let fontScale: Double
+  let wrapCharacters: Int
   let emphasized: Set<UUID>
   let selected: Set<UUID>
   let searchRanges: [UUID: [NSRange]]
@@ -15,9 +17,11 @@ struct SubtitleLinePresentation: Equatable {
   let analyses: [UUID: Analysis]
   let currentSentence: Sentence?
 
-  @MainActor init(model: StudyModel, line: CaptionLine) {
+  @MainActor init(model: StudyModel, line: CaptionLine, current displayCurrent: Bool? = nil, grammarNearby: Bool? = nil, wrapCharacters displayWrap: Int? = nil) {
     session = model.session
-    current = line.index == model.currentLineIndex
+    fontScale = model.subtitleFontScale
+    wrapCharacters = displayWrap ?? (model.subtitleWrapCharacters == SubtitleAppearance.characterRange.upperBound ? Int.max : model.subtitleWrapCharacters)
+    current = displayCurrent ?? (line.index == model.currentLineIndex)
     let ids = Set(line.tokens.map(\.id))
     var highlighted = Set(model.resolvedExpression?.tokens.map(\.id) ?? [])
     if let id = model.currentToken?.id { highlighted.insert(id) }
@@ -31,7 +35,7 @@ struct SubtitleLinePresentation: Equatable {
       active[fragment.tokenID, default: []].append(fragment.range)
     }
     activeSearchRanges = active
-    grammarEnabled = model.grammarEnabledForVideo && abs(line.index - model.currentLineIndex) <= 1
+    grammarEnabled = model.grammarEnabledForVideo && (grammarNearby ?? (abs(line.index - model.currentLineIndex) <= 1))
     if grammarEnabled {
       let owners = Set(line.tokens.map(\.sentenceID))
       analyses = Dictionary(uniqueKeysWithValues: (model.document?.sentences ?? []).compactMap {

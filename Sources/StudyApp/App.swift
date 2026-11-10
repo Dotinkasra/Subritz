@@ -26,16 +26,21 @@ import SwiftUI
 struct MainView: View {
   @ObservedObject var model: StudyModel
   @State private var videoHidden = false
-  @State private var workspaceUpperFraction: CGFloat = 0.55
-  @State private var workspaceLeadingFraction: CGFloat = 0.5
+  private var workspaceUpperFraction: Binding<CGFloat> {
+    Binding(get: { CGFloat(model.settings.workspaceUpperFraction) }, set: { model.setWorkspaceLayout(upper: Double($0)) })
+  }
+  private var workspaceLeadingFraction: Binding<CGFloat> {
+    Binding(get: { CGFloat(model.settings.workspaceLeadingFraction) }, set: { model.setWorkspaceLayout(leading: Double($0)) })
+  }
   @Environment(\.openSettings) private var openSettings
   @Environment(\.openWindow) private var openWindow
   var body: some View {
     VStack(spacing: 0) {
       HStack {
         if model.hasOpenVideo {
-          Button("閉じる", systemImage: "xmark") { model.confirmCloseVideo = true }
-            .labelStyle(.iconOnly).help(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
+          Button { model.confirmCloseVideo = true } label: {
+            HStack(spacing: 6) { Text("閉じる"); Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)) }
+          }.buttonStyle(SoftCloseButtonStyle()).help(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
             .accessibilityLabel(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
           Spacer()
           Text(model.grammarEnabledForVideo ? "AI文法解析 ON" : "AI文法解析 OFF")
@@ -49,13 +54,6 @@ struct MainView: View {
             .disabled(model.isChangingCacheDirectory)
           GrammarLoadOption(model: model)
           Spacer()
-        }
-        if model.ready {
-          Button("初期レイアウトに戻す", systemImage: "arrow.counterclockwise") {
-            workspaceUpperFraction = 0.55
-            workspaceLeadingFraction = 0.5
-          }.labelStyle(.iconOnly).help("初期レイアウトに戻す")
-            .accessibilityLabel("初期レイアウトに戻す")
         }
         Button("英語の視聴時間", systemImage: "chart.bar.xaxis") {
           openWindow(id: "listening-statistics")
@@ -77,8 +75,8 @@ struct MainView: View {
       Divider()
       if !model.hasOpenVideo { LiveSpeechLaunchCard(model: model) }
       if model.ready, let document = model.document {
-        WorkspaceSplitView(upperFraction: $workspaceUpperFraction,
-          leadingFraction: $workspaceLeadingFraction) {
+        WorkspaceSplitView(upperFraction: workspaceUpperFraction,
+          leadingFraction: workspaceLeadingFraction) {
           if model.isLiveSpeech {
             LiveSpeechPanel(model: model).frame(maxWidth: .infinity)
           } else {
@@ -170,7 +168,7 @@ struct MainView: View {
         Text(model.stage).lineLimit(2)
         Spacer()
         if model.ready {
-          SubtitleSpacingControl(model: model)
+          SubtitleLayoutControls(model: model)
         }
         if model.ready {
           Text(model.isLiveSpeech ? "端末内の英語音声認識 · ローカル辞書" : "自動生成英語字幕 · ローカル辞書")
@@ -448,6 +446,7 @@ struct PlaybackControls: View {
 }
 struct SubtitlePane: View {
   @ObservedObject var model: StudyModel
+  @StateObject private var display = SubtitleDisplayState()
   @State private var visibleLineID: UUID?
   @State private var userScrolling = false
   private struct LiveScrollGeometry: Equatable {
@@ -455,13 +454,32 @@ struct SubtitlePane: View {
     let bottomDistance: Double
   }
   private static let liveEndID = "live-subtitle-end"
+  private struct ReflowInputs: Hashable {
+    let session: UUID
+    let sourceRevision: Int
+    let width: CGFloat
+    let characters: Int
+    let fontScale: Double
+    let grammar: Bool
+  }
+  private var currentDisplayRowID: UUID? {
+    let source = model.subtitleLines.indices.contains(model.currentLineIndex) ? model.subtitleLines[model.currentLineIndex].id : nil
+    return display.layout.rowID(containing: model.currentToken?.id ?? model.subtitlePlaybackAnchorID ?? source)
+  }
+  private var displayFollowRowID: UUID? {
+    guard model.subtitleFollowLineID() != nil else { return nil }
+    return model.isLiveSpeech ? display.layout.rows.last?.id : currentDisplayRowID
+  }
   private struct SubtitleFollowLayout: Hashable {
     let session: UUID
     let target: UUID?
+    let displayRevision: Int
     let revision: Int?
     let width: CGFloat
     let height: CGFloat
     let spacing: Double
+    let fontScale: Double
+    let wrapCharacters: Int
     let userScrolling: Bool
   }
   var body: some View {
@@ -494,19 +512,28 @@ struct SubtitlePane: View {
           let standardRowHeight = max(60, min(110, (geometry.size.height - 16) / 3))
           // The compact floor leaves breathing room around the 26 pt current
           // line. Wrapped text and grammar keep their full intrinsic height.
-          let rowHeight = 48 + (standardRowHeight - 48) * model.subtitleRowSpacing
+          let minimumRowHeight = max(48, SubtitleAppearance.fontSize(current: true, scale: model.subtitleFontScale) + 22)
+          let rowHeight = minimumRowHeight + (max(minimumRowHeight, standardRowHeight) - minimumRowHeight) * model.subtitleRowSpacing
+          Group {
+          if !model.grammarEnabledForVideo && !model.isLiveSpeech {
+            VirtualSubtitleList(model: model, layout: display.layout, revision: display.revision,
+              rowHeight: rowHeight, viewportHeight: geometry.size.height,
+              onVisibleRow: { visibleLineID = $0 })
+          } else {
           ScrollView {
             VStack(spacing: 0) {
             LazyVStack(alignment: .leading, spacing: 8) {
-              ForEach(model.subtitleLines) { line in
+              ForEach(display.layout.rows) { line in
                 SubtitleLineView(
-                  model: model, line: line, presentation: SubtitleLinePresentation(model: model, line: line)
+                  model: model, line: line, presentation: SubtitleLinePresentation(model: model, line: line,
+                    current: line.id == currentDisplayRowID,
+                    grammarNearby: currentDisplayRowID.flatMap { display.layout.tokenRows[$0] }.map { abs(line.index - $0) <= 1 } ?? false)
                 ).equatable()
                 .frame(minHeight: rowHeight, alignment: .center)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { model.toggleSubtitleScrollPin(at: line.id) }
                 .overlay {
-                  if model.subtitlePinnedLineID == line.id {
+                  if model.subtitleScrollPinned && display.layout.rowID(containing: model.subtitlePinnedTokenID ?? model.subtitlePinnedLineID) == line.id {
                     RoundedRectangle(cornerRadius: 8).stroke(Color.orange, lineWidth: 2)
                       .allowsHitTesting(false)
                   }
@@ -525,9 +552,10 @@ struct SubtitlePane: View {
           .scrollPosition(id: Binding(get: { nil as UUID? },
             set: { visibleLineID = $0 }), anchor: .center)
           .defaultScrollAnchor(model.followsLiveSubtitles && !userScrolling ? .bottom : nil, for: .sizeChanges)
-          .task(id: SubtitleFollowLayout(session: model.session, target: model.subtitleFollowLineID(),
-            revision: model.liveSubtitleFollowRevision,
+          .task(id: SubtitleFollowLayout(session: model.session, target: displayFollowRowID,
+            displayRevision: display.revision, revision: model.liveSubtitleFollowRevision,
             width: geometry.size.width, height: geometry.size.height, spacing: model.subtitleRowSpacing,
+            fontScale: model.subtitleFontScale, wrapCharacters: model.subtitleWrapCharacters,
             userScrolling: model.isLiveSpeech && userScrolling)) {
             guard model.subtitleFollowLineID() != nil else { return }
             // Scroll after the new row/layout has entered the view tree, both
@@ -555,7 +583,22 @@ struct SubtitlePane: View {
             userScrolling = manual
           }
           .onChange(of: model.session) { userScrolling = false }
-          .onChange(of: visibleLineID) { _, id in model.prefetchDictionary(nearLine: id) }
+          .onChange(of: visibleLineID) { _, id in
+            model.prefetchDictionary(nearLine: id.flatMap { display.layout.tokenSourceLines[$0] })
+          }
+          .onChange(of: display.revision) {
+            Task { @MainActor in
+              await Task.yield()
+              if model.browsingSubtitleSearch { showSearchResult(proxy) }
+              else if model.subtitleScrollPinned,
+                let id = display.layout.rowID(containing: model.subtitlePinnedTokenID ?? model.subtitlePinnedLineID) {
+                proxy.scrollTo(id, anchor: .center)
+              } else if model.isLiveSpeech, !model.liveSubtitleAutoFollow, !userScrolling,
+                let id = display.layout.rowID(containing: visibleLineID) {
+                proxy.scrollTo(id, anchor: .center)
+              }
+            }
+          }
           .onChange(of: model.playing) { if model.playing { follow(proxy) } }
           .onChange(of: model.subtitleScrollPinned) { _, pinned in
             if !pinned { follow(proxy, ignoringSearch: true) }
@@ -567,6 +610,15 @@ struct SubtitlePane: View {
           .onChange(of: model.subtitleSearchQuery) { showSearchResult(proxy) }
           .onChange(of: model.browsingSubtitleSearch) { _, browsing in
             if browsing { showSearchResult(proxy) } else { follow(proxy) }
+          }
+          }
+          }
+          .task(id: ReflowInputs(session: model.session, sourceRevision: model.subtitleTimelineRevision,
+            width: geometry.size.width, characters: model.subtitleWrapCharacters,
+            fontScale: model.subtitleFontScale, grammar: model.grammarEnabledForVideo)) {
+            await display.rebuild(lines: model.subtitleLines, width: max(1, geometry.size.width - 36),
+              characters: model.subtitleWrapCharacters, fontScale: model.subtitleFontScale,
+              grammar: model.grammarEnabledForVideo, session: model.session)
           }
         }
       }
@@ -595,17 +647,17 @@ struct SubtitlePane: View {
   }
   func follow(_ proxy: ScrollViewProxy, ignoringSearch: Bool = false) {
     guard !model.isLiveSpeech || !userScrolling else { return }
-    guard let id = model.subtitleFollowLineID(ignoringSearch: ignoringSearch) else { return }
+    guard model.subtitleFollowLineID(ignoringSearch: ignoringSearch) != nil else { return }
     if model.isLiveSpeech {
       proxy.scrollTo(Self.liveEndID, anchor: .bottom)
       return
     }
     // Follow on line changes, not on every clock tick: scrolling still works within a line.
-    proxy.scrollTo(id, anchor: .center)
+    if let id = currentDisplayRowID { proxy.scrollTo(id, anchor: .center) }
   }
   func showSearchResult(_ proxy: ScrollViewProxy) {
     guard model.subtitleSearchVisible, let match = model.currentSubtitleSearchMatch else { return }
-    proxy.scrollTo(match.lineID, anchor: .center)
+    if let id = display.layout.rowID(containing: match.fragments.first?.tokenID) { proxy.scrollTo(id, anchor: .center) }
   }
 }
 struct SubtitleLineView: View, Equatable {
@@ -618,11 +670,11 @@ struct SubtitleLineView: View, Equatable {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
-      FlowLayout(spacing: 5) {
+      FlowLayout(spacing: 5, maximumCharacters: presentation.wrapCharacters) {
         ForEach(line.tokens) { token in
           VStack(spacing: 2) {
             SubtitleWordButton(
-              title: token.surface, size: current ? 26 : 21, current: current,
+              title: token.surface, size: SubtitleAppearance.fontSize(current: current, scale: presentation.fontScale), current: current,
               enabled: token.lexical,
               onClick: { model.toggleDictionarySelection(token) }, onDoubleClick: { model.seekToWord(token) },
               selectionID: token.id, selectionScope: presentation.session,
@@ -651,7 +703,8 @@ struct SubtitleLineView: View, Equatable {
                 }
               }
             }
-          }.onHover { inside in
+          }.layoutValue(key: SubtitleCharacterCount.self, value: token.surface.count)
+          .onHover { inside in
             if token.lexical {
               if inside { model.hover(token) } else { model.hover(nil, exiting: token.id) }
             }
@@ -768,39 +821,5 @@ struct Underline: View {
         p, with: .color(color(role)),
         style: StrokeStyle(lineWidth: 1.5, dash: role == .PREPOSITIONAL_PHRASE ? [4, 3] : []))
     }
-  }
-}
-struct FlowLayout: Layout {
-  var spacing: CGFloat = 5
-  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-    arrange(width: proposal.width ?? 1000, subviews: subviews).size
-  }
-  func placeSubviews(
-    in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
-  ) {
-    let layout = arrange(width: bounds.width, subviews: subviews)
-    for i in subviews.indices {
-      subviews[i].place(
-        at: CGPoint(x: bounds.minX + layout.points[i].x, y: bounds.minY + layout.points[i].y),
-        proposal: .unspecified)
-    }
-  }
-  func arrange(width: CGFloat, subviews: Subviews) -> (size: CGSize, points: [CGPoint]) {
-    var x: CGFloat = 0
-    var y: CGFloat = 0
-    var row: CGFloat = 0
-    var points: [CGPoint] = []
-    for view in subviews {
-      let size = view.sizeThatFits(.unspecified)
-      if x > 0 && x + size.width > width {
-        x = 0
-        y += row + spacing
-        row = 0
-      }
-      points.append(CGPoint(x: x, y: y))
-      x += size.width + spacing
-      row = max(row, size.height)
-    }
-    return (CGSize(width: width, height: y + row), points)
   }
 }
