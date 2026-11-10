@@ -87,15 +87,18 @@ struct SubtitleLayoutControls: View {
 
 struct SoftCloseButtonStyle: ButtonStyle {
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.isEnabled) private var isEnabled
   func makeBody(configuration: Configuration) -> some View {
     configuration.label.font(.callout.weight(.medium))
       .padding(.horizontal, 10).padding(.vertical, 5)
       .foregroundStyle(
-        colorScheme == .dark
+        !isEnabled ? Color.gray : colorScheme == .dark
           ? Color(red: 0.96, green: 0.70, blue: 0.71) : Color(red: 0.56, green: 0.22, blue: 0.24)
       )
       .background(
-        Color(red: 0.80, green: 0.40, blue: 0.43).opacity(configuration.isPressed ? 0.32 : 0.18),
+        isEnabled
+          ? Color(red: 0.80, green: 0.40, blue: 0.43).opacity(configuration.isPressed ? 0.32 : 0.18)
+          : Color.gray.opacity(0.10),
         in: RoundedRectangle(cornerRadius: 5)
       )
       .contentShape(RoundedRectangle(cornerRadius: 5))

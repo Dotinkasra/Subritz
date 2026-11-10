@@ -65,6 +65,7 @@ extension StudyModel {
     previous?.cancel()
     let previousRecognizer = liveSpeechRecognizer
     liveSpeechRecognizer = nil
+    listeningActivity.stop()
     liveSpeechState = .preparing
     liveSpeechStatus = listen ? "音声認識を準備しています…" : "認識した英文を確定しています…"
     playing = false

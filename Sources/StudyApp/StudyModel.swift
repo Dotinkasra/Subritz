@@ -106,6 +106,7 @@ import SwiftUI
   var backupDelayOverride: Double?
   var listeningBuffer = ListeningBuffer()
   var playbackListening = PlaybackListeningTracker()
+  let listeningActivity = ListeningActivity()
   var speechListening = SpeechListeningTracker()
   var listeningCoverage: EnglishListeningCoverage?
   var listeningCoverageSession: UUID?

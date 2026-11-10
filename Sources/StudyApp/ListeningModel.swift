@@ -5,6 +5,7 @@ extension StudyModel {
   func recordListeningPlayback(_ sample: ListeningPlaybackSample) {
     guard ready, !isLiveSpeech, let timeline else {
       playbackListening.reset()
+      listeningActivity.stop()
       return
     }
     if listeningCoverageSession != session {
@@ -12,33 +13,47 @@ extension StudyModel {
       listeningCoverageSession = session
       playbackListening.reset()
     }
-    guard let coverage = listeningCoverage else { return }
+    guard let coverage = listeningCoverage else {
+      listeningActivity.stop()
+      return
+    }
     for interval in playbackListening.consume(sample, coverage: coverage) {
       listeningBuffer.append(interval, source: .video)
     }
+    if playbackListening.isCounting { listeningActivity.recordActivity() }
+    else { listeningActivity.stop() }
     checkpointListening(uptime: sample.uptime)
     if sample.state != 1 || !sample.audible { flushListeningRecords() }
   }
   func resetListeningPlayback(clearCoverage: Bool = false) {
     playbackListening.reset()
+    listeningActivity.stop()
     if clearCoverage {
       listeningCoverageSession = nil
       listeningCoverage = nil
     }
     flushListeningRecords()
   }
-  func beginListeningSpeechRun() { speechListening.reset() }
+  func beginListeningSpeechRun() {
+    speechListening.reset()
+    listeningActivity.stop()
+  }
   func finishListeningSpeechRun() {
     speechListening.reset()
+    listeningActivity.stop()
     flushListeningRecords()
   }
   func recordListeningSpeech(
     _ update: LiveSpeechUpdate, receivedAt date: Date = Date(),
     uptime: Double = ProcessInfo.processInfo.systemUptime
   ) {
-    for interval in speechListening.consume(update, receivedAt: date) {
+    let intervals = speechListening.consume(update, receivedAt: date)
+    for interval in intervals {
       listeningBuffer.append(interval, source: .speech)
     }
+    if liveSpeechState != .listening || !ListeningEvidence.containsEnglish(update.text) {
+      listeningActivity.stop()
+    } else if !intervals.isEmpty { listeningActivity.recordActivity() }
     checkpointListening(uptime: uptime)
   }
   private func checkpointListening(uptime: Double) {
