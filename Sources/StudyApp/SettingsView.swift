@@ -16,9 +16,10 @@ struct SettingsView: View {
           TextField("yt-dlp 実行ファイル", text: $model.settings.ytDlpPath)
           Text("空欄の場合は自動検出します。").font(.caption).foregroundStyle(.secondary)
         }
+        BackupSettings(model: model, window: window)
         LiveSpeechSettings(model: model)
         WordSpeechSettings(model: model)
-        Section("動画キャッシュ") {
+        Section {
           Picker("容量の上限", selection: $model.settings.cacheMB) {
             ForEach([256, 512, 1024, 2048, 5120], id: \.self) { Text("\($0) MB").tag($0) }
           }
@@ -42,19 +43,25 @@ struct SettingsView: View {
           if !model.cacheMessage.isEmpty {
             Text(model.cacheMessage).font(.caption).foregroundStyle(.secondary)
           }
-          Text("保存先の変更後も、以前のキャッシュは元のフォルダに残ります。英辞郎データの保存先は変わりません。")
-            .font(.caption).foregroundStyle(.secondary)
+        } header: {
+          HStack {
+            Text("動画キャッシュ")
+            SettingsInfoButton(title: "動画キャッシュの保存先について", message:
+              "保存先の変更後も、以前のキャッシュは元のフォルダに残ります。英辞郎データの保存先は変わりません。")
+          }
         }
-        Section("辞書") {
+        Section {
           Toggle("リアルタイム辞書に発音記号を表示する",
             isOn: $model.settings.realtimePronunciationEnabled).toggleStyle(.checkbox)
-          LabeledContent("辞書を開く際のブラウザ") {
+          HStack {
+            Text("辞書を開く際のブラウザ")
+            SettingsInfoButton(title: "辞書を開く方法について", message:
+              "Cambridge Dictionaryの英英辞書を開く方法を選びます。")
+            Spacer()
             DictionaryBrowserPicker(selection: $model.settings.dictionaryBrowser,
               applications: dictionaryBrowsers)
               .frame(width: 280)
           }
-          Text("Cambridge Dictionaryの英英辞書を開く方法を選びます。")
-            .font(.caption).foregroundStyle(.secondary)
           Picker("使用する辞書", selection: $model.settings.dictionary) {
             Text("macOS 標準辞書").tag("macOS")
             Text("英辞郎").tag("eijiro")
@@ -76,8 +83,12 @@ struct SettingsView: View {
           if !model.dictionaryMessage.isEmpty {
             Text(model.dictionaryMessage).font(.caption).foregroundStyle(.secondary)
           }
-          Text("ご自身が所有する英辞郎テキストを指定してください。macOS辞書の日本語語義はOSの辞書設定に依存します。")
-            .font(.caption).foregroundStyle(.secondary)
+        } header: {
+          HStack {
+            Text("辞書")
+            SettingsInfoButton(title: "辞書データについて", message:
+              "ご自身が所有する英辞郎テキストを指定してください。macOS辞書の日本語語義はOSの辞書設定に依存します。")
+          }
         }
         Section("文法解析") {
           Picker("解析サービス", selection: $model.settings.provider) {
@@ -108,7 +119,7 @@ struct SettingsView: View {
           Text("5〜3600秒。解析サービスの変更は次の動画読み込みから反映します。モデル名はサービスごとに保存します。")
             .font(.caption).foregroundStyle(.secondary)
         }
-      }.formStyle(.grouped).textFieldStyle(.roundedBorder)
+      }.formStyle(.grouped).textFieldStyle(.roundedBorder).disabled(model.isRestoringBackup)
       Divider()
       HStack {
         Text(model.settingsMessage.isEmpty ? "変更は自動で保存されます" : model.settingsMessage)
@@ -120,6 +131,7 @@ struct SettingsView: View {
         }.keyboardShortcut(.cancelAction)
       }.padding(16)
     }.frame(width: 720, height: 780)
+      .modifier(BackupRestoreConfirmation(model: model))
       .onAppear { dictionaryBrowsers = DictionaryBrowser.installed() }
       .background(SettingsWindowTitle(window: window).frame(width: 0, height: 0))
       .onChange(of: model.settings) { old, _ in model.saveSettings(previous: old) }

@@ -16,7 +16,11 @@ struct VirtualSubtitleList: NSViewRepresentable {
 
   func makeCoordinator() -> Coordinator { Coordinator() }
   func makeNSView(context: Context) -> NSScrollView {
-    let scroll = NSScrollView()
+    let scroll = SubtitleScrollView()
+    scroll.onUserScroll = { [weak model] in model?.suspendVideoSubtitleFollowing() }
+    let scroller = SubtitleScroller()
+    scroller.onUserScroll = scroll.onUserScroll
+    scroll.verticalScroller = scroller
     scroll.hasVerticalScroller = true
     scroll.hasHorizontalScroller = false
     scroll.drawsBackground = false
@@ -59,6 +63,7 @@ struct VirtualSubtitleList: NSViewRepresentable {
     private var pinned = false
     private var dragging = false
     private var playing = false
+    private var autoFollowing = true
     private var visibleID: UUID?
     private var publication: Task<Void, Never>?
 
@@ -137,6 +142,7 @@ struct VirtualSubtitleList: NSViewRepresentable {
       let wasPinned = pinned
       let wasDragging = dragging
       let wasPlaying = playing
+      let wasAutoFollowing = autoFollowing
       input = next
       revision = next.revision
       session = model.session
@@ -147,19 +153,23 @@ struct VirtualSubtitleList: NSViewRepresentable {
       pinned = model.subtitleScrollPinned
       dragging = model.draggingDictionarySelection
       playing = model.playing
+      autoFollowing = model.videoSubtitleAutoFollow
       let requested: UUID?
       if searching {
         requested = model.currentSubtitleSearchMatch?.fragments.first?.tokenID
       } else if pinned {
         requested = model.subtitlePinnedTokenID ?? model.subtitlePinnedLineID
+      } else if !autoFollowing {
+        requested = visibleID
       } else {
         requested = model.currentToken?.id ?? model.subtitlePlaybackAnchorID
           ?? model.subtitleLines.first?.id
       }
       let newTarget = next.layout.rowID(containing: requested)
       let shouldFollow = !dragging && (
-        changed || dimensionsChanged || (!pinned && (target != newTarget || wasSearching || wasPinned
-          || wasDragging || (!wasPlaying && playing))) || (searching && target != newTarget))
+        changed || dimensionsChanged || (searching && target != newTarget)
+          || (!searching && !pinned && autoFollowing && (target != newTarget || wasSearching
+            || wasPinned || wasDragging || !wasAutoFollowing || (!wasPlaying && playing))))
       target = newTarget
       table.tableColumns.first?.width = max(1, scroll.contentSize.width)
       if changed {
@@ -210,5 +220,19 @@ struct VirtualSubtitleList: NSViewRepresentable {
     var presentation: SubtitleLinePresentation?
     var pinned = false
     var height: CGFloat = 0
+  }
+  @MainActor final class SubtitleScrollView: NSScrollView {
+    var onUserScroll: (() -> Void)?
+    override func scrollWheel(with event: NSEvent) {
+      if event.scrollingDeltaY != 0 { onUserScroll?() }
+      super.scrollWheel(with: event)
+    }
+  }
+  @MainActor final class SubtitleScroller: NSScroller {
+    var onUserScroll: (() -> Void)?
+    override func mouseDown(with event: NSEvent) {
+      onUserScroll?()
+      super.mouseDown(with: event)
+    }
   }
 }

@@ -17,4 +17,10 @@
 <key>NSSpeechRecognitionUsageDescription</key><string>英語の音声を端末内で認識し、字幕と辞書に表示します。</string>
 <key>NSAudioCaptureUsageDescription</key><string>Macで再生中の英語を端末内で認識し、字幕として表示します。音声は保存しません。</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/><key>NSAllowsArbitraryLoads</key><true/></dict>
+<key>UTExportedTypeDeclarations</key><array><dict>
+<key>UTTypeIdentifier</key><string>jp.local.subritz.backup</string>
+<key>UTTypeDescription</key><string>Subritz Backup</string>
+<key>UTTypeConformsTo</key><array><string>public.data</string></array>
+<key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>subritzbackup</string></array></dict>
+</dict></array>
 </dict></plist>

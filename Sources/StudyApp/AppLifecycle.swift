@@ -18,6 +18,7 @@ import SwiftUI
       await model.liveSpeechShutdown?.value
       await model.libraryOperation?.value
       await model.listeningSaveTask?.value
+      await model.finishBackupBeforeQuitting()
       var shouldQuit = true
       if let error = model.libraryError ?? model.listeningSaveError {
         let alert = NSAlert()

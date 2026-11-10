@@ -8,14 +8,16 @@ import SwiftUI
   var body: some Scene {
     Window(appName, id: "main") {
       MainView(model: model).frame(minWidth: 1100, minHeight: 700)
+        .disabled(model.isRestoringBackup)
         .background(MainWindowLifecycle(model: model).frame(width: 0, height: 0))
         .onAppear { lifecycle.model = model }
     }.commands { SubritzCommands(model: model) }
     Window(appName + " — ライブラリ", id: "library") {
       LibraryView(model: model).frame(minWidth: 760, minHeight: 500)
+        .disabled(model.isRestoringBackup)
     }.defaultSize(width: 900, height: 620)
     Window("お気に入りをエクスポート", id: "favorite-export") {
-      FavoriteExportView(model: model)
+      FavoriteExportView(model: model).disabled(model.isRestoringBackup)
     }.windowResizability(.contentSize)
     Window("Subritz — 英語の視聴時間", id: "listening-statistics") {
       ListeningStatisticsView(study: model).equatable()
@@ -42,9 +44,8 @@ struct MainView: View {
             HStack(spacing: 6) { Text("閉じる"); Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)) }
           }.buttonStyle(SoftCloseButtonStyle()).help(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
             .accessibilityLabel(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
+          listeningStatisticsButton
           Spacer()
-          Text(model.grammarEnabledForVideo ? "AI文法解析 ON" : "AI文法解析 OFF")
-            .font(.caption).foregroundStyle(.secondary)
           if model.ready { ImmersionModeToggle(model: model) }
         } else {
           TextField("https://www.youtube.com/watch?v=…", text: $model.url)
@@ -53,19 +54,21 @@ struct MainView: View {
           Button("読み込む") { model.load() }.keyboardShortcut(.return, modifiers: .command)
             .disabled(model.isChangingCacheDirectory)
           GrammarLoadOption(model: model)
+          listeningStatisticsButton
           Spacer()
         }
-        Button("英語の視聴時間", systemImage: "chart.bar.xaxis") {
-          openWindow(id: "listening-statistics")
-        }.labelStyle(.iconOnly).help("英語の視聴時間").accessibilityLabel("英語の視聴時間")
-        Button("動画履歴", systemImage: "clock") {
-          model.librarySection = .history
-          openWindow(id: "library")
-        }.labelStyle(.iconOnly).help("動画履歴").accessibilityLabel("動画履歴")
-        Button("お気に入り", systemImage: "star") {
-          model.librarySection = .favorites
-          openWindow(id: "library")
-        }.labelStyle(.iconOnly).help("単語のお気に入り").accessibilityLabel("単語のお気に入り")
+        HStack(spacing: 4) {
+          Button("動画履歴", systemImage: "clock") {
+            model.librarySection = .history
+            openWindow(id: "library")
+          }.labelStyle(.iconOnly).help("動画履歴").accessibilityLabel("動画履歴")
+          Button("お気に入り", systemImage: "star") {
+            model.librarySection = .favorites
+            openWindow(id: "library")
+          }.labelStyle(.iconOnly).help("単語のお気に入り").accessibilityLabel("単語のお気に入り")
+        }.padding(4)
+          .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+          .overlay { RoundedRectangle(cornerRadius: 8).stroke(.primary.opacity(0.12), lineWidth: 1) }
         Button {
           model.showSettings = true
         } label: {
@@ -124,12 +127,6 @@ struct MainView: View {
         VStack(spacing: 18) {
           Image(systemName: "captions.bubble").font(.system(size: 48)).foregroundStyle(.secondary)
           Text("好きな動画で英語学習").font(.title2)
-          Text(
-            "英語の自動字幕がある YouTube 動画を読み込みます。\n字幕の単語にマウスを置くと詳細辞書を表示し、クリックすると固定し、ダブルクリックするとその発話位置へ移動します。"
-          )
-          .multilineTextAlignment(
-            .center
-          ).foregroundStyle(.secondary)
           if model.loading { ProgressView() }
           Text(model.stage).font(.callout)
 
@@ -165,7 +162,8 @@ struct MainView: View {
         }.padding(12).background(.red.opacity(0.06))
       }
       HStack {
-        Text(model.stage).lineLimit(2)
+        Text(model.ready
+          ? (model.grammarEnabledForVideo ? "AI文法解析: ON" : "AI文法解析: OFF") : model.stage).lineLimit(2)
         Spacer()
         if model.ready {
           SubtitleLayoutControls(model: model)
@@ -190,6 +188,11 @@ struct MainView: View {
       Text(model.isLiveSpeech ? "音声の取得を終了します。認識した英文はアプリ終了までキャッシュに残ります。"
         : "字幕の解析と再生を終了し、URL入力画面に戻ります。保存済みのキャッシュは残ります。")
     }
+  }
+  private var listeningStatisticsButton: some View {
+    Button("英語の視聴時間", systemImage: "chart.bar.xaxis") {
+      openWindow(id: "listening-statistics")
+    }.labelStyle(.iconOnly).help("英語の視聴時間").accessibilityLabel("英語の視聴時間")
   }
 }
 struct GrammarLoadOption: View {
@@ -494,7 +497,7 @@ struct SubtitlePane: View {
         } else {
           Text(model.subtitleScrollPinned ? "スクロール固定中" : model.isLiveSpeech
             ? (model.liveSubtitleAutoFollow ? "最新の字幕に追従中" : "過去の字幕を表示中")
-            : model.playing ? "再生位置に追従" : "過去・未来へスクロールできます")
+            : !model.videoSubtitleAutoFollow ? "自動追従を解除中" : model.playing ? "再生位置に追従" : "過去・未来へスクロールできます")
             .font(.caption).foregroundStyle(.secondary)
           Button { model.openSubtitleSearch() } label: { Image(systemName: "magnifyingglass") }
             .help("字幕内を検索（⌘F）").accessibilityLabel("字幕内を検索")
@@ -505,7 +508,8 @@ struct SubtitlePane: View {
         }.help(model.subtitleScrollPinned ? "字幕の固定を解除して再生位置へ戻る" : "字幕のスクロール位置を固定（行の余白をダブルクリックでも切替）")
           .accessibilityLabel(model.subtitleScrollPinned ? "字幕のスクロール固定を解除" : "字幕のスクロール位置を固定")
           .accessibilityValue(model.subtitleScrollPinned ? "固定中" : model.isLiveSpeech
-            ? (model.liveSubtitleAutoFollow ? "最新の字幕に追従中" : "フリースクロール中") : "再生位置に追従")
+            ? (model.liveSubtitleAutoFollow ? "最新の字幕に追従中" : "フリースクロール中")
+            : model.videoSubtitleAutoFollow ? "再生位置に追従" : "フリースクロール中")
       }.frame(height: 28)
       ScrollViewReader { proxy in
         GeometryReader { geometry in
@@ -570,6 +574,9 @@ struct SubtitlePane: View {
           } action: { previous, current in
             model.updateLiveSubtitleScroll(previousOffset: previous.offset, offset: current.offset,
               bottomDistance: current.bottomDistance, userInitiated: userScrolling)
+            if userScrolling && abs(current.offset - previous.offset) > 0.5 {
+              model.suspendVideoSubtitleFollowing()
+            }
           }
           .onScrollPhaseChange { _, phase, context in
             // Include momentum, but never treat programmatic scrolling as a gesture.
@@ -593,11 +600,14 @@ struct SubtitlePane: View {
               else if model.subtitleScrollPinned,
                 let id = display.layout.rowID(containing: model.subtitlePinnedTokenID ?? model.subtitlePinnedLineID) {
                 proxy.scrollTo(id, anchor: .center)
-              } else if model.isLiveSpeech, !model.liveSubtitleAutoFollow, !userScrolling,
+              } else if (model.isLiveSpeech ? !model.liveSubtitleAutoFollow : !model.videoSubtitleAutoFollow), !userScrolling,
                 let id = display.layout.rowID(containing: visibleLineID) {
                 proxy.scrollTo(id, anchor: .center)
               }
             }
+          }
+          .onChange(of: model.videoSubtitleAutoFollow) { _, enabled in
+            if enabled { follow(proxy) }
           }
           .onChange(of: model.playing) { if model.playing { follow(proxy) } }
           .onChange(of: model.subtitleScrollPinned) { _, pinned in
@@ -620,9 +630,28 @@ struct SubtitlePane: View {
               characters: model.subtitleWrapCharacters, fontScale: model.subtitleFontScale,
               grammar: model.grammarEnabledForVideo, session: model.session)
           }
+          .overlay(alignment: .bottom) {
+            if !model.isLiveSpeech && !model.videoSubtitleAutoFollow && !model.subtitleScrollPinned
+              && !model.browsingSubtitleSearch {
+              Button { model.resumeVideoSubtitleFollowing() } label: {
+                Image(systemName: returnToPlaybackArrow).font(.system(size: 17, weight: .semibold))
+                  .frame(width: 38, height: 38)
+                  .background(.regularMaterial, in: Circle())
+                  .overlay { Circle().stroke(.primary.opacity(0.18), lineWidth: 1) }
+              }.buttonStyle(.plain).shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+                .help("現在の字幕へ戻って自動追従を再開")
+                .accessibilityLabel("現在の字幕へ戻って自動追従を再開")
+                .padding(.bottom, 12)
+            }
+          }
         }
       }
     }.padding(16).background(Color(nsColor: .windowBackgroundColor))
+  }
+  private var returnToPlaybackArrow: String {
+    let current = currentDisplayRowID.flatMap { display.layout.tokenRows[$0] } ?? 0
+    let visible = visibleLineID.flatMap { display.layout.tokenRows[$0] } ?? current
+    return current < visible ? "arrow.up" : "arrow.down"
   }
   private var searchControls: some View {
     HStack(spacing: 8) {
@@ -673,25 +702,32 @@ struct SubtitleLineView: View, Equatable {
       FlowLayout(spacing: 5, maximumCharacters: presentation.wrapCharacters) {
         ForEach(line.tokens) { token in
           VStack(spacing: 2) {
-            SubtitleWordButton(
-              title: token.surface, size: SubtitleAppearance.fontSize(current: current, scale: presentation.fontScale), current: current,
-              enabled: token.lexical,
-              onClick: { model.toggleDictionarySelection(token) }, onDoubleClick: { model.seekToWord(token) },
-              selectionID: token.id, selectionScope: presentation.session,
-              onDrag: { endpoint in model.pinDictionaryRange(from: token.id, to: endpoint) },
-              onDragState: { model.draggingDictionarySelection = $0 },
-              searchRanges: presentation.searchRanges[token.id] ?? [],
-              activeSearchRanges: presentation.activeSearchRanges[token.id] ?? []
-            )
-            .background(
-              presentation.emphasized.contains(token.id)
-                ? Color.accentColor.opacity(0.24) : .clear,
-              in: RoundedRectangle(cornerRadius: 4)
-            )
-            .overlay {
-              RoundedRectangle(cornerRadius: 4)
-                .stroke(presentation.selected.contains(token.id) ? Color.orange : .clear, lineWidth: 1.5)
-                .allowsHitTesting(false)
+            if token.lexical {
+              SubtitleWordButton(
+                title: token.surface, size: SubtitleAppearance.fontSize(current: current, scale: presentation.fontScale), current: current,
+                enabled: token.lexical,
+                onClick: { model.toggleDictionarySelection(token) }, onDoubleClick: { model.seekToWord(token) },
+                selectionID: token.id, selectionScope: presentation.session,
+                onDrag: { endpoint in model.pinDictionaryRange(from: token.id, to: endpoint) },
+                onDragState: { model.draggingDictionarySelection = $0 },
+                searchRanges: presentation.searchRanges[token.id] ?? [],
+                activeSearchRanges: presentation.activeSearchRanges[token.id] ?? []
+              )
+              .background(
+                presentation.emphasized.contains(token.id)
+                  ? Color.accentColor.opacity(0.24) : .clear,
+                in: RoundedRectangle(cornerRadius: 4)
+              )
+              .overlay {
+                RoundedRectangle(cornerRadius: 4)
+                  .stroke(presentation.selected.contains(token.id) ? Color.orange : .clear, lineWidth: 1.5)
+                  .allowsHitTesting(false)
+              }
+            } else {
+              SubtitlePunctuation(title: token.surface,
+                size: SubtitleAppearance.fontSize(current: current, scale: presentation.fontScale),
+                current: current, searchRanges: presentation.searchRanges[token.id] ?? [],
+                activeSearchRanges: presentation.activeSearchRanges[token.id] ?? [])
             }
             if presentation.grammarEnabled {
               ForEach(Array(spans(token).enumerated()), id: \.offset) { _, span in

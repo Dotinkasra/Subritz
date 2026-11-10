@@ -61,5 +61,6 @@ extension StudyModel {
     saved.subtitleFontScale = settings.subtitleFontScale
     saved.liveSubtitleFontScale = settings.liveSubtitleFontScale
     saved.save(defaults: defaults)
+    markBackupChanged()
   }
 }

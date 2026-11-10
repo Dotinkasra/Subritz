@@ -1,11 +1,11 @@
 import Foundation
 
-public enum ListeningSource: String, CaseIterable, Sendable {
+public enum ListeningSource: String, CaseIterable, Codable, Sendable {
   case video, speech
   public var title: String { self == .video ? "動画" : "音声認識" }
 }
 
-public struct ListeningSpan: Sendable, Equatable, Identifiable {
+public struct ListeningSpan: Codable, Sendable, Equatable, Identifiable {
   public let id: UUID
   public let start: Date
   public var end: Date
