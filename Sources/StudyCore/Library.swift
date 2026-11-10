@@ -3,10 +3,15 @@ import Foundation
 public struct VideoHistoryItem: Codable, Sendable, Identifiable {
   public var video: Video
   public var lastOpened: Date
+  public var lastPosition: Double?
+  public var positionUpdatedAt: Date?
   public var id: String { video.id }
-  public init(video: Video, lastOpened: Date = Date()) {
+  public init(video: Video, lastOpened: Date = Date(), lastPosition: Double? = nil,
+    positionUpdatedAt: Date? = nil) {
     self.video = video
     self.lastOpened = lastOpened
+    self.lastPosition = lastPosition
+    self.positionUpdatedAt = positionUpdatedAt
   }
 }
 public struct FavoriteWord: Codable, Sendable, Identifiable {
@@ -73,6 +78,12 @@ public actor LibraryStore {
         try db.execute("COMMIT")
       } catch { try? db.execute("ROLLBACK"); throw error }
     }
+    // Copy old exit positions without removing or changing any saved timestamps.
+    try db.execute("BEGIN IMMEDIATE")
+    do {
+      try Self.migrateHistoryPositions(in: db)
+      try db.execute("COMMIT")
+    } catch { try? db.execute("ROLLBACK"); throw error }
     try db.execute("PRAGMA user_version=3")
   }
   func encode<T: Encodable>(_ value: T) throws -> String {
@@ -82,6 +93,41 @@ public actor LibraryStore {
     try db.rows("SELECT payload FROM video_history ORDER BY opened DESC,rowid DESC LIMIT 100").map {
       try JSONDecoder().decode(VideoHistoryItem.self, from: Data($0[0].utf8))
     }
+  }
+  public func historyItem(for videoID: String) throws -> VideoHistoryItem? {
+    guard let row = try db.rows("SELECT payload FROM video_history WHERE video_id=?",
+      values: [videoID]).first else { return nil }
+    return try JSONDecoder().decode(VideoHistoryItem.self, from: Data(row[0].utf8))
+  }
+  static func migrateHistoryPositions(in db: SQLiteDatabase) throws {
+    let rows = try db.rows("""
+      SELECT h.payload,t.payload FROM video_history h
+      JOIN video_timestamps t ON t.id='resume:' || h.video_id
+      """)
+    for row in rows {
+      var item = try JSONDecoder().decode(VideoHistoryItem.self, from: Data(row[0].utf8))
+      guard item.lastPosition == nil else { continue }
+      let timestamp = try JSONDecoder().decode(VideoTimestamp.self, from: Data(row[1].utf8))
+      guard timestamp.kind == .resume, timestamp.video.id == item.id,
+        timestamp.time.isFinite, timestamp.time >= 0 else { continue }
+      item.lastPosition = item.video.duration > 0
+        ? min(timestamp.time, item.video.duration) : timestamp.time
+      item.positionUpdatedAt = timestamp.savedAt
+      try db.execute("UPDATE video_history SET payload=? WHERE video_id=?",
+        values: [String(decoding: try JSONEncoder().encode(item), as: UTF8.self), item.id])
+    }
+  }
+  /// Only confirmed player positions may reach this method. Never recreate a
+  /// history row removed by the user while its video is still playing.
+  public func saveHistoryPosition(videoID: String, position: PlaybackResumePosition) throws {
+    guard position.isValid else { throw AppFailure("再生位置が正しくありません") }
+    guard var item = try historyItem(for: videoID) else { return }
+    item.lastPosition = position.time
+    item.positionUpdatedAt = position.date
+    item.lastOpened = max(item.lastOpened, position.date)
+    item.video.duration = position.duration
+    try db.execute("UPDATE video_history SET opened=?,payload=? WHERE video_id=?",
+      values: [String(item.lastOpened.timeIntervalSince1970), try encode(item), videoID])
   }
   func upsertHistory(_ item: VideoHistoryItem) throws {
     var item = item
@@ -105,7 +151,10 @@ public actor LibraryStore {
   public func record(_ video: Video, at date: Date = Date()) throws {
     try db.execute("BEGIN IMMEDIATE")
     do {
-      try upsertHistory(VideoHistoryItem(video: video, lastOpened: date))
+      let prior = try historyItem(for: video.id)
+      try upsertHistory(VideoHistoryItem(video: video, lastOpened: date,
+        lastPosition: prior?.lastPosition, positionUpdatedAt: prior?.positionUpdatedAt))
+      try Self.migrateHistoryPositions(in: db)
       try trimHistory()
       try db.execute("COMMIT")
     } catch {
@@ -122,6 +171,7 @@ public actor LibraryStore {
       var existing = Set(try history().map(\.id))
       for item in items.sorted(by: { $0.lastOpened > $1.lastOpened }).prefix(100)
       where existing.insert(item.id).inserted { try upsertHistory(item) }
+      try Self.migrateHistoryPositions(in: db)
       try trimHistory()
       try db.execute("INSERT INTO library_metadata VALUES('historySeeded','1')")
       try db.execute("COMMIT")

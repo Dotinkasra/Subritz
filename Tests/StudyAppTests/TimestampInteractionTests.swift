@@ -48,6 +48,10 @@ private actor TimestampVideoProvider: YouTubeProvider {
     model.grammarEnabledForVideo = false
     return (model, root)
   }
+  func sample(_ model: StudyModel, time: Double) {
+    model.bridge.receive(["session": model.bridge.playbackID,
+      "time": time, "duration": 2.0, "state": 2])
+  }
   func cleanup(_ model: StudyModel, _ root: URL) {
     model.ready = false  // Test teardown is not a user closing a video.
     model.closeVideo()
@@ -60,6 +64,7 @@ private actor TimestampVideoProvider: YouTubeProvider {
     #expect(model.savingBookmark)
     model.saveBookmark() // duplicate event while the write is in flight
     model.seek(1.2)
+    sample(model, time: 1.2) // The iframe acknowledges the seek before closing.
     let document = try #require(model.document)
     model.closeVideo()
     model.closeVideo()
@@ -71,6 +76,7 @@ private actor TimestampVideoProvider: YouTubeProvider {
     model.document = document
     model.ready = true
     model.time = 1.8
+    sample(model, time: 1.8)
     model.closeVideo()
     await model.libraryOperation?.value
     #expect(model.videoTimestamps.count == 2)
@@ -117,6 +123,7 @@ private actor TimestampVideoProvider: YouTubeProvider {
     defer { cleanup(model, root) }
     let provider = TimestampVideoProvider()
     model.youtubeProviderOverride = provider
+    sample(model, time: 0.1)
     let timestamp = VideoTimestamp(video: Video(id: "lmnopqrstuv", title: "Paper garden", duration: 120), time: 80.125)
     #expect(!model.selectTimestamp(timestamp))
     #expect(await provider.calls().isEmpty)

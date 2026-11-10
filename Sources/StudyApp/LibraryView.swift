@@ -63,7 +63,7 @@ struct LibraryView: View {
             .disabled(model.libraryLoading || model.favoriteWords.isEmpty)
         }
       }.font(.caption).foregroundStyle(.secondary).padding(12)
-      if let error = model.libraryError {
+      if let error = model.historyPositionSaveError ?? model.libraryError {
         Text(error).font(.callout).foregroundStyle(.red).padding(12)
       }
     }
@@ -88,7 +88,7 @@ struct LibraryView: View {
   }
   var countDescription: String {
     switch model.librarySection {
-    case .history: return "\(model.videoHistory.count) / 100件 · 最近開いた順"
+    case .history: return "\(model.videoHistory.count) / 100件 · 最終視聴日順"
     case .timestamps:
       return "\(Set(model.videoTimestamps.map { $0.video.id }).count)本 · \(model.videoTimestamps.count) / 1000件 · 最近保存した動画順"
     case .favorites: return "\(model.favoriteWords.count)語 · 最近登録した順"
@@ -102,22 +102,26 @@ struct LibraryView: View {
       case .history:
         if history.isEmpty { emptyList }
         else {
-          List(history) { item in
-            Button {
-              if selectRow(item.id, in: .history) {
+          List(selection: selection) {
+            ForEach(HistoryDayGroup.grouped(history)) { group in
+              Section(group.day.formatted(.dateTime.year().month().day().weekday())) {
+                ForEach(group.videos) { item in
+                  VideoLibraryRow(video: item.video, subtitle: historyPositionLabel(item))
+                    .tag(item.id)
+                    .help("クリックで選択、ダブルクリックで最後の位置から動画を開く")
+                }
+              }
+            }
+          }.listStyle(.inset).disabled(model.isChangingCacheDirectory)
+            .contextMenu(forSelectionType: String.self) { ids in
+              Button("履歴から削除", role: .destructive) {
+                for item in history where ids.contains(item.id) { model.removeHistory(item) }
+              }.disabled(ids.isEmpty)
+            } primaryAction: { ids in
+              if let item = history.first(where: { ids.contains($0.id) }) {
                 finishNavigation(model.selectHistory(item))
               }
-            } label: {
-              VideoLibraryRow(video: item.video,
-                subtitle: item.lastOpened.formatted(.dateTime.year().month().day().hour().minute()))
-            }.buttonStyle(.plain).disabled(model.isChangingCacheDirectory)
-              .listRowBackground(rowBackground(item.id, in: .history))
-              .accessibilityAddTraits(selections[.history] == item.id ? .isSelected : [])
-              .help("クリックで選択、選択中の項目をもう一度クリックで動画を開く")
-              .contextMenu {
-                Button("履歴から削除", role: .destructive) { model.removeHistory(item) }
-              }
-          }.listStyle(.inset)
+            }
         }
       case .timestamps:
         if timestampVideos.isEmpty { emptyList }
@@ -179,19 +183,24 @@ struct LibraryView: View {
           VStack(alignment: .leading, spacing: 20) {
             HistoryThumbnail(video: item.video)
             Text(item.video.title).font(.title2).textSelection(.enabled)
-            Button("動画を開く", systemImage: "play.fill") {
-              finishNavigation(model.selectHistory(item))
-            }.disabled(model.isChangingCacheDirectory)
-            Divider()
-            Text("保存したタイムスタンプ").font(.headline)
-            let saved = model.videoTimestamps.filter { $0.video.id == item.video.id }
-            if saved.isEmpty { Text("この動画の記録はありません").foregroundStyle(.secondary) }
-            ForEach(saved) { timestamp in
-              Button { open(timestamp) } label: {
-                Label(PlaybackTime.format(timestamp.time) + " · " + timestampLabel(timestamp),
-                  systemImage: "play.circle")
-              }.disabled(model.isChangingCacheDirectory)
+            VStack(alignment: .leading, spacing: 8) {
+              Text("最後に開いた位置").font(.headline).foregroundStyle(.secondary)
+              if let position = item.lastPosition {
+                Text(PlaybackTime.format(position)).font(.largeTitle).monospacedDigit()
+                if item.video.duration > 0 {
+                  Text("全体 " + PlaybackTime.format(item.video.duration))
+                    .font(.callout).foregroundStyle(.secondary)
+                }
+              } else {
+                Text("再生位置は未記録です").foregroundStyle(.secondary)
+              }
             }
+            Button(item.lastPosition == nil ? "最初から再生" : "最後の位置から再生",
+              systemImage: "play.fill") { finishNavigation(model.selectHistory(item)) }
+              .disabled(model.isChangingCacheDirectory)
+            Divider()
+            LabeledContent("最終視聴", value: item.lastOpened.formatted(.dateTime.year().month().day().hour().minute()))
+            Text(item.video.watchURL).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
           }.frame(maxWidth: .infinity, alignment: .leading).padding(24)
         }
       } else { ContentUnavailableView("動画を選んでください", systemImage: "play.rectangle") }
@@ -243,13 +252,6 @@ struct LibraryView: View {
   func open(_ item: VideoTimestamp) {
     finishNavigation(model.selectTimestamp(item))
   }
-  // The row button owns selection. A List selection binding would select a new
-  // row before its button action, mistaking the first click for a repeat click.
-  func selectRow(_ id: String, in section: LibrarySection) -> Bool {
-    let repeated = selections[section] == id
-    selections[section] = id
-    return repeated
-  }
   func rowBackground(_ id: String, in section: LibrarySection) -> Color {
     selections[section] == id ? Color.accentColor.opacity(0.2) : .clear
   }
@@ -258,6 +260,11 @@ struct LibraryView: View {
     openWindow(id: "main")
     dismissWindow(id: "library")
   }
+}
+func historyPositionLabel(_ item: VideoHistoryItem) -> String {
+  guard let time = item.lastPosition else { return "再生位置は未記録" }
+  return "最後に開いた位置 " + PlaybackTime.format(time)
+    + (item.video.duration > 0 ? " / " + PlaybackTime.format(item.video.duration) : "")
 }
 func timestampLabel(_ timestamp: VideoTimestamp) -> String {
   switch timestamp.kind {

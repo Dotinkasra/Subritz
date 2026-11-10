@@ -144,7 +144,7 @@ struct MainView: View {
           if let details = model.grammarErrorDetails { ErrorDetails(text: details) }
         }.padding(12)
       }
-      if let error = model.libraryError {
+      if let error = model.historyPositionSaveError ?? model.libraryError {
         Text(error).font(.callout).foregroundStyle(.red).padding(10)
       }
       if let error = model.error {
