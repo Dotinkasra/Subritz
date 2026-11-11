@@ -38,6 +38,7 @@ public struct Token: Codable, Identifiable, Equatable {
   public var lexical: Bool
   public var captionLineIndex: Int? = nil
   public var grammarRole: Role? = nil
+  public var pronunciationInflection: PronunciationInflection? = nil
 }
 public struct Sentence: Codable, Identifiable, Equatable {
   public var id: UUID
@@ -146,6 +147,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
   public var aiGrammarEnabled = true
   public var advancedMode = false
   public var realtimePronunciationEnabled = true
+  public var pronunciationRegion = PronunciationRegion.us
   public var wordSpeechQuality = WordSpeechQuality.standard
   public var subtitleRowSpacing = 1.0
   public var liveSubtitleRowSpacing = 1.0
@@ -184,7 +186,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
   enum CodingKeys: String, CodingKey {
     case ytDlpPath, codexPath, dictionary, provider, baseURL, localModel, codexModel,
       cacheDirectory, timeout, cacheMB, localConcurrency, codexConcurrency, aiGrammarEnabled,
-      advancedMode, dictionaryBrowser, realtimePronunciationEnabled, wordSpeechQuality,
+      advancedMode, dictionaryBrowser, realtimePronunciationEnabled, pronunciationRegion, wordSpeechQuality,
       speechAudioSource, speechMicrophoneID, liveSpeechCacheMB,
       subtitleRowSpacing, liveSubtitleRowSpacing, workspaceUpperFraction, workspaceLeadingFraction,
       subtitleWrapCharacters, liveSubtitleWrapCharacters, subtitleFontScale, liveSubtitleFontScale
@@ -205,6 +207,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
     advancedMode = try c.decodeIfPresent(Bool.self, forKey: .advancedMode) ?? advancedMode
     realtimePronunciationEnabled = try c.decodeIfPresent(Bool.self, forKey: .realtimePronunciationEnabled)
       ?? realtimePronunciationEnabled
+    pronunciationRegion = (try? c.decodeIfPresent(PronunciationRegion.self, forKey: .pronunciationRegion))
+      ?? pronunciationRegion
     wordSpeechQuality = (try? c.decodeIfPresent(WordSpeechQuality.self, forKey: .wordSpeechQuality))
       ?? wordSpeechQuality
     subtitleRowSpacing = min(1, max(0, try c.decodeIfPresent(Double.self, forKey: .subtitleRowSpacing) ?? subtitleRowSpacing))

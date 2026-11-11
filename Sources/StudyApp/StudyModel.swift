@@ -647,6 +647,7 @@ import SwiftUI
   func dictionaryKey(_ token: Token) -> String {
     settings.dictionary + ":" + token.normalized + ":" + (token.partOfSpeech ?? "") + ":"
       + (token.lemma ?? "")
+      + ":" + (token.pronunciationInflection?.rawValue ?? "")
   }
   func prefetchDictionary(at time: Double) {
     prefetchDictionary(nearLine: timeline?.line(at: time)?.id)

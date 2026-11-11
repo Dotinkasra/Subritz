@@ -9,6 +9,7 @@ public struct DictionaryEntry: Sendable {
   public var partOfSpeech: String? = nil
   public var sections: [DictionarySection] = []
   public var pronunciation: String? = nil
+  public var pronunciationCandidates: [PronunciationCandidate] = []
   public var expandedForms: [String] = []
   public var usedPartOfSpeechFallback = false
   public var blocks: [DictionaryBlock] = []
@@ -231,10 +232,20 @@ enum EijiroText {
     let pronunciation = ordered(senses).filter { $0.group == group }
       .compactMap { DictionaryText.pronunciation($0.definition) }.first
       ?? DictionaryText.pronunciation(detailed)
+    let candidates = ordered(senses).flatMap { sense -> [PronunciationCandidate] in
+      guard let raw = DictionaryText.pronunciation(sense.definition) else { return [] }
+      let owner = sense.label != nil ? sense : ordered(senses).first {
+        $0.group == sense.group && $0.label != nil
+      }
+      return PronunciationText.parse(raw,
+        partOfSpeech: owner.flatMap { partOfSpeech($0, preferred: pos) },
+        inflections: PronunciationText.inflectionsIn(meaning(sense.definition)), headword: sense.headword)
+    }
     return DictionaryEntry(definition: detailed, shortGloss: gloss.isEmpty ? "日本語の語義なし" : gloss,
       partOfSpeech: selection.senses.first.flatMap { partOfSpeech($0, preferred: pos) },
       sections: sections(senses),
       pronunciation: pronunciation,
+      pronunciationCandidates: candidates,
       usedPartOfSpeechFallback: selection.fallback, blocks: blocks(senses))
   }
   static func blocks(_ senses: [Sense]) -> [DictionaryBlock] {
@@ -458,6 +469,8 @@ public actor EijiroProvider: DictionaryProvider {
         shortGloss: resolved.shortGloss, headword: reference,
         partOfSpeech: direct.partOfSpeech ?? resolved.partOfSpeech,
         pronunciation: direct.pronunciation ?? resolved.pronunciation,
+        pronunciationCandidates: direct.pronunciationCandidates.isEmpty
+          ? resolved.pronunciationCandidates : direct.pronunciationCandidates,
         usedPartOfSpeechFallback: direct.usedPartOfSpeechFallback || resolved.usedPartOfSpeechFallback,
         blocks: direct.blocks + [DictionaryBlock("参照先: " + reference, role: .phrase)] + resolved.blocks)
     }

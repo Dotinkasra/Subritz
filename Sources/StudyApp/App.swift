@@ -275,7 +275,8 @@ struct DictionaryPane: View {
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 22) {
                   if model.settings.realtimePronunciationEnabled {
-                    DictionaryPronunciation(value: model.dictionaryEntry?.pronunciation, size: 22)
+                    DictionaryPronunciation(value: model.dictionaryEntry?.realtimePronunciation(
+                      for: token, region: model.settings.pronunciationRegion), size: 22)
                   }
                   if !model.realtimeEnglishOnly {
                     if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {

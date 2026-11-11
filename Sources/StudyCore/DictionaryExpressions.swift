@@ -13,6 +13,7 @@ public struct DictionaryExpression {
     // token lemmas can erase negation or possession and invent another phrase.
     token.lemma = nil
     token.partOfSpeech = "複数語表現"
+    token.pronunciationInflection = nil
     token.endTime = tokens.last!.endTime
     return token
   }
