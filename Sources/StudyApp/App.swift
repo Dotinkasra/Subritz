@@ -92,7 +92,7 @@ struct MainView: View {
                       Rectangle().fill(Color(nsColor: .windowBackgroundColor))
                         .allowsHitTesting(false)
                       Button {
-                        model.playing ? model.bridge.pause() : model.bridge.play()
+                        model.toggleVideoPlayback()
                       } label: {
                         VStack(spacing: 12) {
                           Image(systemName: "speaker.wave.2").font(.system(size: 32))
@@ -441,7 +441,7 @@ struct PlaybackControls: View {
         .help("現在の再生位置にしおりを追加")
         .accessibilityLabel("しおりを追加")
       Button {
-        model.playing ? model.bridge.pause() : model.bridge.play()
+        model.toggleVideoPlayback()
       } label: {
         Image(systemName: model.playing ? "pause.fill" : "play.fill")
       }
