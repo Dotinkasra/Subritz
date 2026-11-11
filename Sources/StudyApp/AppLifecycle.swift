@@ -11,16 +11,11 @@ import SwiftUI
     if terminating { return .terminateLater }
     guard let model else { return .terminateNow }
     guard !model.hasOpenVideo || confirmVideoExit(quitting: true, liveSpeech: model.isLiveSpeech) else { return .terminateCancel }
-    model.flushAPIKey()
-    model.closeVideo()
     terminating = true
     Task {
-      await model.liveSpeechShutdown?.value
-      await model.libraryOperation?.value
-      await model.listeningSaveTask?.value
-      await model.finishBackupBeforeQuitting()
+      await model.prepareForApplicationTermination()
       var shouldQuit = true
-      if let error = model.libraryError ?? model.listeningSaveError {
+      if let error = model.historyPositionSaveError ?? model.libraryError ?? model.listeningSaveError {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "学習記録を保存できませんでした"
@@ -34,6 +29,18 @@ import SwiftUI
       sender.reply(toApplicationShouldTerminate: shouldQuit)
     }
     return .terminateLater
+  }
+}
+
+extension StudyModel {
+  // Shared by the actual OS termination callback and the persistence tests.
+  func prepareForApplicationTermination() async {
+    flushAPIKey()
+    closeVideo()
+    await liveSpeechShutdown?.value
+    await libraryOperation?.value
+    await listeningSaveTask?.value
+    await finishBackupBeforeQuitting()
   }
 }
 

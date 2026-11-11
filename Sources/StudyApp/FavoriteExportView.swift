@@ -16,6 +16,7 @@ struct FavoriteExportView: View {
   @State private var initialized = false
   @State private var window = WindowReference()
   enum RangeChoice: String, CaseIterable { case all, dates, latest }
+  private var words: [FavoriteWord] { model.favoriteExportWords }
 
   private var exporter: FavoriteExport {
     let selection: FavoriteExportRange
@@ -27,13 +28,13 @@ struct FavoriteExportView: View {
     return FavoriteExport(format: format, range: selection, includeMetadata: metadata)
   }
   private var selection: Result<[FavoriteWord], Error> {
-    Result { try exporter.selected(from: model.favoriteWords) }
+    Result { try exporter.selected(from: words) }
   }
   private var selectedCount: Int { (try? selection.get().count) ?? 0 }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text("お気に入りをエクスポート").font(.title2.bold())
+      Text(model.favoriteExportArchived ? "アーカイブをエクスポート" : "お気に入りをエクスポート").font(.title2.bold())
       Form {
         Picker("ファイル形式", selection: $format) {
           Text("テキスト（.txt）").tag(FavoriteExportFormat.text)
@@ -78,8 +79,13 @@ struct FavoriteExportView: View {
       .onAppear {
         guard !initialized else { return }
         initialized = true
-        start = model.favoriteWords.map(\.savedAt).min() ?? Date()
+        start = words.map(\.savedAt).min() ?? Date()
         end = Date()
+      }
+      .onChange(of: model.favoriteExportArchived) {
+        start = words.map(\.savedAt).min() ?? Date()
+        end = Date()
+        message = nil
       }
   }
 
@@ -91,11 +97,11 @@ struct FavoriteExportView: View {
     }
     // Capture the selection and library together so later changes cannot alter the file mid-export.
     let contents: String
-    do { contents = try exporter.contents(words: model.favoriteWords, timestamps: model.videoTimestamps) }
+    do { contents = try exporter.contents(words: words, timestamps: model.videoTimestamps) }
     catch { message = error.localizedDescription; return }
     let panel = NSSavePanel()
     panel.title = "お気に入りを書き出す"
-    panel.nameFieldStringValue = "Subritz-favorites." + format.fileExtension
+    panel.nameFieldStringValue = (model.favoriteExportArchived ? "Subritz-archive." : "Subritz-favorites.") + format.fileExtension
     panel.allowedContentTypes = [format == .csv ? .commaSeparatedText : .plainText]
     panel.canCreateDirectories = true
     exporting = true

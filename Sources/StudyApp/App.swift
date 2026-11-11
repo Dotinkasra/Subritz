@@ -39,24 +39,22 @@ struct MainView: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        if model.hasOpenVideo {
-          Button { model.confirmCloseVideo = true } label: {
-            HStack(spacing: 6) { Text("閉じる"); Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)) }
-          }.buttonStyle(SoftCloseButtonStyle()).help(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
-            .accessibilityLabel(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
-          listeningStatisticsButton
-          Spacer()
-          if model.ready { ImmersionModeToggle(model: model) }
-        } else {
+        Button { model.confirmCloseVideo = true } label: {
+          HStack(spacing: 6) { Text("閉じる"); Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)) }
+        }.buttonStyle(SoftCloseButtonStyle()).disabled(!model.hasOpenVideo)
+          .help(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
+          .accessibilityLabel(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる")
+        if !model.isLiveSpeech {
           TextField("https://www.youtube.com/watch?v=…", text: $model.url)
-            .textFieldStyle(.roundedBorder).frame(maxWidth: 520).onSubmit { model.load() }
+            .textFieldStyle(.roundedBorder).frame(minWidth: 180, maxWidth: 520).onSubmit { model.load() }
             .disabled(model.isChangingCacheDirectory)
           Button("読み込む") { model.load() }.keyboardShortcut(.return, modifiers: .command)
-            .disabled(model.isChangingCacheDirectory)
+            .fixedSize().disabled(model.isChangingCacheDirectory)
           GrammarLoadOption(model: model)
-          listeningStatisticsButton
-          Spacer()
         }
+        listeningStatisticsButton
+        Spacer()
+        if model.ready { ImmersionModeToggle(model: model) }
         HStack(spacing: 4) {
           Button("動画履歴", systemImage: "clock") {
             model.librarySection = .history
@@ -144,7 +142,7 @@ struct MainView: View {
           if let details = model.grammarErrorDetails { ErrorDetails(text: details) }
         }.padding(12)
       }
-      if let error = model.libraryError {
+      if let error = model.historyPositionSaveError ?? model.libraryError {
         Text(error).font(.callout).foregroundStyle(.red).padding(10)
       }
       if let error = model.error {
@@ -172,6 +170,7 @@ struct MainView: View {
           Text(model.isLiveSpeech ? "端末内の英語音声認識 · ローカル辞書" : "自動生成英語字幕 · ローカル辞書")
             .foregroundStyle(.secondary)
         }
+        ListeningActivityIndicator(activity: model.listeningActivity)
       }.font(.caption).padding(10)
     }
     .onChange(of: model.showSettings) { _, shown in
@@ -202,8 +201,8 @@ struct GrammarLoadOption: View {
       get: { model.settings.aiGrammarEnabled }, set: { model.setAIGrammarEnabled($0) }
     ))
     .toggleStyle(.checkbox).fixedSize()
-    .disabled(model.hasOpenVideo || model.isChangingCacheDirectory)
-    .help("OFFの場合、AIへ字幕を送らず、文法の下線・ラベルを表示しません。動画・字幕・辞書は使えます。")
+    .disabled(model.isChangingCacheDirectory)
+    .help("次に読み込む動画に適用します。OFFの場合、AIへ字幕を送らず、文法の下線・ラベルを表示しません。動画・字幕・辞書は使えます。")
   }
 }
 struct ImmersionModeToggle: View {

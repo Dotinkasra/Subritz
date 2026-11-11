@@ -61,8 +61,10 @@ import SwiftUI
   @Published var librarySection: LibrarySection = .history
   @Published var libraryLoading = false
   @Published var libraryError: String?
+  @Published var historyPositionSaveError: String?
   @Published var videoHistory: [VideoHistoryItem] = []
   @Published var favoriteWords: [FavoriteWord] = []
+  @Published var favoriteExportArchived = false
   @Published var videoTimestamps: [VideoTimestamp] = []
   @Published var savingBookmark = false
   @Published var timestampMessage = ""
@@ -84,6 +86,8 @@ import SwiftUI
   var library: LibraryStore?
   var libraryStartup: Task<LibraryStore, Error>?
   var libraryOperation: Task<Void, Never>?
+  var resumeTracker = PlaybackResumeTracker()
+  var pendingHistoryPositions: [String: PendingHistoryPosition] = [:]
   @Published var backupPreferences = BackupPreferences()
   @Published var backupStatus = ""
   @Published var backupError: String?
@@ -103,6 +107,7 @@ import SwiftUI
   var backupDelayOverride: Double?
   var listeningBuffer = ListeningBuffer()
   var playbackListening = PlaybackListeningTracker()
+  let listeningActivity = ListeningActivity()
   var speechListening = SpeechListeningTracker()
   var listeningCoverage: EnglishListeningCoverage?
   var listeningCoverageSession: UUID?
@@ -156,6 +161,9 @@ import SwiftUI
     liveTranscriptCache.setLimit(settings.liveSpeechCacheMB * 1024 * 1024)
     bridge.onTime = { [weak self] t, d, s in self?.update(time: t, duration: d, state: s) }
     bridge.onListeningSample = { [weak self] sample in self?.recordListeningPlayback(sample) }
+    bridge.onResumePosition = { [weak self] position, state, uptime in
+      self?.recordHistoryPosition(position, state: state, uptime: uptime)
+    }
     bridge.onError = { [weak self] message in self?.error = message }
     guard prepareStorage else { return }
     let directory = settings.cacheURL
@@ -171,15 +179,17 @@ import SwiftUI
       } catch { self.error = "永続データを開けませんでした：" + error.localizedDescription }
     }
   }
-  @discardableResult func load(startTime: Double = 0) -> Bool {
-    guard !isRestoringBackup, !isChangingCacheDirectory, startTime.isFinite, startTime >= 0 else { return false }
+  @discardableResult func load(startTime: Double? = nil) -> Bool {
+    guard !isRestoringBackup, !isChangingCacheDirectory,
+      startTime.map({ $0.isFinite && $0 >= 0 }) ?? true else { return false }
     phase = .validatingURL
     let id: String
     do { id = try YouTubeURL.id(url) } catch {
       self.error = error.localizedDescription
       return false
     }
-    if isLiveSpeech { closeVideo() }
+    if hasOpenVideo { closeVideo() }
+    resumeTracker = PlaybackResumeTracker()
     resetListeningPlayback()
     loadTask?.cancel()
     backgroundTask?.cancel()
@@ -219,14 +229,31 @@ import SwiftUI
     selectedDictionaryID = nil
     activeSentenceIndex = nil
     lastPriorityTime = -300
-    initialPlaybackTime = startTime
-    time = startTime
+    initialPlaybackTime = startTime ?? 0
+    time = startTime ?? 0
     duration = 0
     timestampMessage = ""
     let config = settings
     grammarEnabledForVideo = config.aiGrammarEnabled
     loadTask = Task {
       do {
+        // Wait for the previous video's final write, including when the same URL
+        // is entered again. An explicit bookmark at 0 must still start at 0.
+        if startTime == nil {
+          await libraryOperation?.value
+          guard sid == session, !Task.isCancelled else { return }
+          if let library {
+            let stored = try await library.historyItem(for: id)?.lastPosition
+            guard sid == session, !Task.isCancelled else { return }
+            let saved = pendingHistoryPositions[id]?.position.time ?? stored
+            if let saved, saved.isFinite, saved >= 0 {
+              initialPlaybackTime = saved
+              time = saved
+            }
+          } else if libraryStartup != nil {
+            throw AppFailure("再開位置を確認できませんでした。ライブラリのエラーを確認してください")
+          }
+        }
         if store == nil, let storageTask {
           let stores = try await storageTask.value
           store = stores.0
@@ -728,6 +755,8 @@ import SwiftUI
     subtitlePlaybackAnchorID = nil
     videoSubtitleAutoFollow = true
     saveExitTimestamp()
+    flushHistoryPosition()
+    resumeTracker = PlaybackResumeTracker()
     endLiveSpeech()
     loadTask?.cancel()
     backgroundTask?.cancel()

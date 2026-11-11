@@ -92,7 +92,7 @@ extension StudyModel {
     await libraryOperation?.value
     flushListeningRecords()
     await listeningSaveTask?.value
-    if let error = libraryError ?? listeningSaveError { throw AppFailure(error) }
+    if let error = historyPositionSaveError ?? libraryError ?? listeningSaveError { throw AppFailure(error) }
     let storage: LibraryStore
     if let library {
       storage = library

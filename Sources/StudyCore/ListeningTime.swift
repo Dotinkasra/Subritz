@@ -134,19 +134,24 @@ public struct ListeningPlaybackSample: Sendable {
 /// Uses authoritative iframe samples, not the interpolated display clock.
 public struct PlaybackListeningTracker {
   private var previous: ListeningPlaybackSample?
+  public private(set) var isCounting = false
   public init() {}
-  public mutating func reset() { previous = nil }
+  public mutating func reset() {
+    previous = nil
+    isCounting = false
+  }
   public mutating func consume(
     _ sample: ListeningPlaybackSample, coverage: EnglishListeningCoverage
   ) -> [DateInterval] {
     guard sample.mediaTime.isFinite, sample.uptime.isFinite, sample.rate.isFinite,
       sample.rate > 0, sample.date.timeIntervalSince1970.isFinite
     else {
-      previous = nil
+      reset()
       return []
     }
     guard let last = previous else {
       previous = sample
+      isCounting = false
       return []
     }
     let elapsed = sample.uptime - last.uptime
@@ -157,19 +162,22 @@ public struct PlaybackListeningTracker {
       return []
     }
     previous = sample
+    isCounting = false
     let progress = sample.mediaTime - last.mediaTime
     guard last.state == 1, sample.state == 1, last.audible, sample.audible,
       last.rate == sample.rate, elapsed > 0, elapsed <= 5, progress > 0,
       abs(progress - elapsed * sample.rate) <= max(0.35, elapsed * sample.rate * 0.2)
     else { return [] }
     let wallStart = sample.date.addingTimeInterval(-elapsed)
-    return coverage.intersections(from: last.mediaTime, to: sample.mediaTime).map { range in
+    let intervals = coverage.intersections(from: last.mediaTime, to: sample.mediaTime).map { range in
       let start = wallStart.addingTimeInterval(
         (range.lowerBound - last.mediaTime) / progress * elapsed)
       let end = wallStart.addingTimeInterval(
         (range.upperBound - last.mediaTime) / progress * elapsed)
       return DateInterval(start: start, end: end)
     }
+    isCounting = !intervals.isEmpty
+    return intervals
   }
 }
 

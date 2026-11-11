@@ -24,10 +24,15 @@ public struct LibraryBackupData: Codable, Sendable {
     guard history.count <= 100, timestamps.count <= 1000,
       unique(history.map(\.id)), unique(favorites.map(\.id)), unique(timestamps.map(\.id)),
       unique(listening.map(\.id)),
-      history.allSatisfy({ validVideo($0.video) && validDate($0.lastOpened) }),
+      history.allSatisfy({
+        validVideo($0.video) && validDate($0.lastOpened)
+          && ($0.lastPosition.map { $0.isFinite && $0 >= 0 } ?? true)
+          && ($0.positionUpdatedAt.map(validDate) ?? true)
+      }),
       favorites.allSatisfy({
         !$0.id.isEmpty && $0.id == DictionaryText.normalize($0.surface)
           && validDate($0.savedAt) && $0.sourceTime.isFinite && $0.sourceTime >= 0
+          && ($0.archivedAt.map(validDate) ?? true)
           && ($0.sourceVideo.map(validVideo) ?? true)
       }),
       timestamps.allSatisfy({
@@ -139,6 +144,7 @@ extension LibraryStore {
       }
       // Restore the exact saved set, including intentionally deleted occurrences.
       for item in data.timestamps { try upsertTimestamp(item) }
+      try Self.migrateHistoryPositions(in: db)
       for span in data.listening {
         try db.execute(
           "INSERT INTO listening_spans VALUES(?,?,?,?)",

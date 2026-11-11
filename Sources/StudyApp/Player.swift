@@ -7,6 +7,7 @@ import WebKit
   weak var webView: WKWebView?
   var onTime: ((Double, Double, Int) -> Void)?
   var onListeningSample: ((ListeningPlaybackSample) -> Void)?
+  var onResumePosition: ((PlaybackResumePosition, Int, Double) -> Void)?
   var onError: ((String) -> Void)?
   private var clock = PlaybackClock()
   private var timer: Timer?
@@ -17,11 +18,13 @@ import WebKit
   private(set) var pendingSeekTime: Double?
   private var playerReady = false
   private var seekIssuedAt: Double?
+  private var unconfirmedSeekTime: Double?
   func prepareForVideo(at time: Double) {
     stopClock()
     playbackID = UUID().uuidString
     initialTime = max(0, time)
     pendingSeekTime = initialTime > 0 ? initialTime : nil
+    unconfirmedSeekTime = pendingSeekTime
     playerReady = false
     seekIssuedAt = nil
     duration = 0
@@ -33,6 +36,7 @@ import WebKit
     playbackID = UUID().uuidString
     playerReady = false
     pendingSeekTime = nil
+    unconfirmedSeekTime = nil
     webView = nil
   }
   func startClock() {
@@ -58,7 +62,7 @@ import WebKit
     guard let body = message.body as? [String: Any] else { return }
     receive(body)
   }
-  func receive(_ body: [String: Any]) {
+  func receive(_ body: [String: Any], now: Double = CACurrentMediaTime(), date: Date = Date()) {
     // Ignore callbacks from the previous iframe while a replacement video loads.
     guard body["session"] as? String == playbackID else { return }
     if let error = body["error"] as? Int {
@@ -67,7 +71,7 @@ import WebKit
     }
     if body["ready"] as? Bool == true {
       playerReady = true
-      issuePendingSeek()
+      issuePendingSeek(now: now)
       return
     }
     guard let time = body["time"] as? Double, let duration = body["duration"] as? Double,
@@ -78,12 +82,14 @@ import WebKit
       let target = duration > 0 ? min(pending, duration) : pending
       if target != pending {
         pendingSeekTime = target
-        issuePendingSeek()
+        unconfirmedSeekTime = target
+        issuePendingSeek(now: now)
       }
-      if abs(time - target) <= 0.75 {
+      if duration > 0, time <= duration, [0, 1, 2].contains(state),
+        abs(time - target) <= 0.75, target == 0 || time > 0 {
         pendingSeekTime = nil
         seekIssuedAt = nil
-      } else if let issued = seekIssuedAt, CACurrentMediaTime() - issued > 8 {
+      } else if let issued = seekIssuedAt, now - issued > 8 {
         pendingSeekTime = nil
         seekIssuedAt = nil
         onError?("保存した再生位置へ移動できませんでした。シークバーで移動してください")
@@ -93,9 +99,18 @@ import WebKit
     }
     self.duration = duration
     self.state = state
-    let now = CACurrentMediaTime()
+    let position = PlaybackResumePosition(time: time, duration: duration, date: date)
+    if position.isValid, [0, 1, 2].contains(state) {
+      if let target = unconfirmedSeekTime, abs(time - min(target, duration)) <= 0.75,
+        target == 0 || time > 0 {
+        unconfirmedSeekTime = nil
+      }
+      // A failed seek can fall back to 0 in the iframe. Keep the previous saved
+      // position until the requested target is actually acknowledged.
+      if unconfirmedSeekTime == nil { onResumePosition?(position, state, now) }
+    }
     let rate = body["rate"] as? Double ?? 1
-    onListeningSample?(ListeningPlaybackSample(mediaTime: time, uptime: now, date: Date(),
+    onListeningSample?(ListeningPlaybackSample(mediaTime: time, uptime: now, date: date,
       state: state, rate: rate, audible: body["muted"] as? Bool != true && (body["volume"] as? Double ?? 100) > 0))
     clock.sample(
       time: time, now: now, state: state, rate: rate)
@@ -106,12 +121,13 @@ import WebKit
   func seek(_ time: Double) {
     guard time.isFinite else { return }
     pendingSeekTime = max(0, time)
+    unconfirmedSeekTime = pendingSeekTime
     clock.seek(to: max(0, time), now: CACurrentMediaTime())
     issuePendingSeek()
   }
-  private func issuePendingSeek() {
+  private func issuePendingSeek(now: Double = CACurrentMediaTime()) {
     guard playerReady, let time = pendingSeekTime else { return }
-    seekIssuedAt = CACurrentMediaTime()
+    seekIssuedAt = now
     webView?.evaluateJavaScript("player?.seekTo(\(time),true)")
   }
 }
