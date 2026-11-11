@@ -268,22 +268,23 @@ struct DictionaryPane: View {
         GeometryReader { geometry in
           ScrollView {
             if let token = model.displayedToken {
-              RealtimeDictionaryLayout(viewportHeight: geometry.size.height) {
+              let pronunciation = model.settings.realtimePronunciationEnabled
+                ? model.dictionaryEntry?.realtimePronunciation(
+                  for: token, region: model.settings.pronunciationRegion) : nil
+              RealtimeDictionaryLayout(viewportHeight: geometry.size.height,
+                headingIndex: model.realtimeEnglishOnly ? 0 : 1) {
+                if !model.realtimeEnglishOnly {
+                  RealtimePronunciationSlot(value: pronunciation)
+                }
                 Text(token.surface).font(
                   .system(size: min(68, geometry.size.width / 8), weight: .bold)
                 )
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 22) {
-                  if model.settings.realtimePronunciationEnabled {
-                    DictionaryPronunciation(value: model.dictionaryEntry?.realtimePronunciation(
-                      for: token, region: model.settings.pronunciationRegion), size: 22)
+                  if model.realtimeEnglishOnly {
+                    RealtimePronunciationSlot(value: pronunciation)
                   }
                   if !model.realtimeEnglishOnly {
-                    if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
-                      Text("省略前：" + entry.expandedForms.joined(separator: " / "))
-                        .font(.system(size: 18)).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    }
                     if let entry = model.dictionaryEntry {
                       let meanings = realtimeMeanings(entry.shortGloss)
                       VStack(spacing: 12) {
@@ -304,6 +305,11 @@ struct DictionaryPane: View {
                     } else {
                       Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "語義が見つかりません")
                         .font(.title2).foregroundStyle(.secondary)
+                    }
+                    if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
+                      Text("省略前：" + entry.expandedForms.joined(separator: " / "))
+                        .font(.system(size: 18)).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                     }
                   }
                 }
