@@ -5,6 +5,27 @@ import Testing
 
 // All definitions and examples below are independently authored test data.
 struct EijiroTests {
+  @Test func realtimePronunciationSelectsUseBeforeRegionAndKeepsAllOriginalDetails() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provider = try EijiroProvider(directory: root)
+    let file = root.appendingPathComponent("authored.txt")
+    try """
+    ■sampleunit {1} : 【発音】[US]næʊn | [UK]nəʊn
+    ■sampleunit {1-名} : 自作名義
+    ■sampleunit {2} : 【発音】[US]《強》strɒŋ | 《弱》wək | [UK]《弱》wɜːk
+    ■sampleunit {2-動} : 自作動義
+    ■sample phrase : 自作句義
+    """.write(to: file, atomically: true, encoding: .utf8)
+    _ = try await provider.importFile(file)
+    let verb = PronunciationTests().token()
+    let entry = try #require(await provider.lookup(verb))
+    #expect(entry.realtimePronunciation(for: verb, region: .us) == "wək")
+    #expect(entry.realtimePronunciation(for: verb, region: .uk) == "wɜːk")
+    #expect(entry.definition.contains("næʊn") && entry.definition.contains("strɒŋ"))
+    let phrase = try #require(await provider.lookupExpressions([[token("sample", pos: "Noun"), token("phrase", pos: "Noun")]]).first ?? nil)
+    #expect(phrase.realtimePronunciation(for: token("sample phrase"), region: .us) == nil)
+  }
   static let expected = "自作名義A、自作名義B、自作名義C、自作名義D、自作名義E（補足、注記）、自作名義F"
   let records = [
     ("sampleunit", "【レベル】9、【発音】sample-pronunciation、【＠】テスト音、【変化】《複》sampleunits"),

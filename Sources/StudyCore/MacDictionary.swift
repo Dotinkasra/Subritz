@@ -201,6 +201,7 @@ enum MacDictionaryMarkup {
       pronunciation: pronunciations.isEmpty ? nil : pronunciations.joined(separator: " / "),
       sections: sections, pos: nil, definition: blocks.map(\.text).joined(separator: "\n"))
     parsed.blocks = blocks
+    parsed.pronunciationCandidates = pronunciationCandidates(in: scope, headword: headword, sections: sections)
     return parsed
   }
   static func combine(_ entries: [DictionaryEntry], pos: String?) -> DictionaryEntry? {
@@ -210,7 +211,83 @@ enum MacDictionaryMarkup {
       sections: sections, pos: pos,
       definition: entries.count == 1 ? first.definition : entries.map(\.definition).joined(separator: "\n\n"))
     combined.blocks = entries.flatMap(\.blocks)
+    combined.pronunciationCandidates = entries.flatMap(\.pronunciationCandidates)
     return combined
+  }
+  static func pronunciationCandidates(in scope: XMLElement, headword: String,
+    sections: [DictionarySection]) -> [PronunciationCandidate] {
+    var result: [PronunciationCandidate] = []
+    let firstPOS = sections.first?.partOfSpeech
+    let referenceForms = sections.flatMap(\.senses).prefix(1).flatMap { sense -> [PronunciationInflection] in
+      // A separate inflection record can have the same spelling (e.g. read).
+      guard sense.meaning.range(of: #"^[A-Za-z0-9¹²]+の(?:過去|現在|原形)"#,
+        options: .regularExpression) != nil else { return [] }
+      return PronunciationText.inflectionsIn(sense.meaning)
+    }
+    for node in scope.allElements where node.semantic("prn") != nil || node.semantic("pr") != nil {
+      guard let raw = node.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { continue }
+      let ancestors = node.ancestors(until: scope)
+      guard !ancestors.contains(where: { $0.hasClass("exg") || $0.hasClass("box")
+        || $0.hasClass("etym") || $0.hasClass("u") || $0.hasClass("np") }) else { continue }
+      // Anchored phrases own their pronunciation; never inherit the parent word's.
+      if scope.localName == "entry", ancestors.contains(where: {
+        $0.hasClass("idmsec") || $0.hasClass("drvsec") || $0.hasClass("csec")
+      }) { continue }
+      let group = ancestors.first(where: { $0.hasClass("gramb") })
+      let pos = group.flatMap(partOfSpeech) ?? firstPOS
+      let pronunciationGroup = ancestors.first(where: { $0.hasClass("pr") })
+      let before = pronunciationGroup.map { textBefore(node, in: $0) } ?? ""
+      var forms = referenceForms
+      var owner = headword
+      if let note = ancestors.first(where: { $0.hasClass("grnote") }) {
+        // Only an explicit statement about this headword's inflection is usable.
+        let prefix = textBefore(node, in: note).components(separatedBy: ";").last ?? ""
+        guard prefix.range(of: #"(?:過去形|過去分詞).*発音(?:は|が)?\s*[|\s]*$"#,
+          options: .regularExpression) != nil else { continue }
+        forms = PronunciationText.inflectionsIn(prefix)
+      } else if let formGroup = ancestors.first(where: { $0.hasClass("frmg") }) {
+        let preceding = textBefore(pronunciationGroup ?? node, in: formGroup)
+        let formNodes = formGroup.allElements.filter { $0.hasClass("frm") }
+        let all = formGroup.allElements
+        guard let index = all.firstIndex(where: { $0 === node }),
+          let label = all[..<index].last(where: { $0.hasClass("frm") }),
+          let written = label.stringValue else { continue }
+        owner = written.replacingOccurrences(of: "～", with: headword)
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let last = formNodes.last?.stringValue, last.hasSuffix("ing"), formNodes.count == 3,
+          formNodes[1] === label {
+          forms = [.past, .pastParticiple]
+        } else if written.hasSuffix("ing") { forms = [.presentParticiple] }
+        else if written.hasSuffix("s") { forms = [.thirdPerson] }
+        else { forms = PronunciationText.inflectionsIn(preceding) }
+      } else {
+        // Accept main headings and POS headings, excluding pronunciation fragments in meanings.
+        guard ancestors.contains(where: { $0.hasClass("hwg") || $0.hasClass("x_xdh") }) else { continue }
+        if forms.isEmpty, PronunciationText.canonicalPOS(pos) == "Verb" { forms = [.base] }
+      }
+      let pr = node.semantic("pr") ?? ""
+      let region: PronunciationRegion? = pr.contains("US") ? .us : pr.contains("UK") ? .uk : nil
+      var strength: PronunciationCandidate.Strength? = nil
+      let label = before.components(separatedBy: CharacterSet(charactersIn: ",;|")).last ?? ""
+      if label.contains("強") { strength = .strong }
+      else if label.contains("弱") { strength = .weak }
+      // Some WISDOM headers mark only the strong form, with the weak forms preceding it.
+      else if pronunciationGroup?.stringValue?.contains("｟強｠") == true { strength = .weak }
+      result += PronunciationText.parse(raw, region: region, strength: strength,
+        partOfSpeech: pos, inflections: forms, headword: owner)
+    }
+    return result
+  }
+  static func textBefore(_ target: XMLNode, in root: XMLNode) -> String {
+    var text = ""
+    func visit(_ node: XMLNode) -> Bool {
+      if node === target { return false }
+      if node.kind == .text { text += node.stringValue ?? "" }
+      for child in node.children ?? [] { if !visit(child) { return false } }
+      return true
+    }
+    _ = visit(root)
+    return text
   }
   static func makeEntry(headword: String, pronunciation: String?, sections: [DictionarySection], pos: String?,
     definition fullDefinition: String? = nil) -> DictionaryEntry {

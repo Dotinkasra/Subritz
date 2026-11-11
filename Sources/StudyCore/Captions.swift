@@ -161,6 +161,7 @@ public struct CaptionPipeline {
           }
         }
       }
+      tokens = PronunciationContext.annotate(tokens)
       return Sentence(
         id: id, videoID: videoID, index: index, text: text, startTime: tokens.first!.startTime,
         endTime: tokens.last!.endTime, tokens: tokens)
@@ -226,8 +227,13 @@ public struct Timeline {
   public let tokens: [Token]
   public let lines: [CaptionLine]
   public init(_ sentences: [Sentence]) {
-    self.sentences = sentences
-    tokens = sentences.flatMap(\.tokens).sorted { $0.startTime < $1.startTime }
+    // Also enrich old cached transcripts, without invalidating their grammar analysis.
+    self.sentences = sentences.map { sentence in
+      var annotated = sentence
+      annotated.tokens = PronunciationContext.annotate(sentence.tokens)
+      return annotated
+    }
+    tokens = self.sentences.flatMap(\.tokens).sorted { $0.startTime < $1.startTime }
     var groups: [[Token]] = []
     for token in tokens {
       if let last = groups.last?.last,

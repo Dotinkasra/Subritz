@@ -92,7 +92,7 @@ struct MainView: View {
                       Rectangle().fill(Color(nsColor: .windowBackgroundColor))
                         .allowsHitTesting(false)
                       Button {
-                        model.playing ? model.bridge.pause() : model.bridge.play()
+                        model.toggleVideoPlayback()
                       } label: {
                         VStack(spacing: 12) {
                           Image(systemName: "speaker.wave.2").font(.system(size: 32))
@@ -267,48 +267,62 @@ struct DictionaryPane: View {
       if model.realtime && !detailed {
         GeometryReader { geometry in
           ScrollView {
-            VStack(spacing: 22) {
-              if let token = model.displayedToken {
+            if let token = model.displayedToken {
+              let pronunciation = model.settings.realtimePronunciationEnabled
+                ? model.dictionaryEntry?.realtimePronunciation(
+                  for: token, region: model.settings.pronunciationRegion) : nil
+              RealtimeDictionaryLayout(viewportHeight: geometry.size.height,
+                headingIndex: model.realtimeEnglishOnly ? 0 : 1) {
+                if !model.realtimeEnglishOnly {
+                  RealtimePronunciationSlot(value: pronunciation)
+                }
                 Text(token.surface).font(
                   .system(size: min(68, geometry.size.width / 8), weight: .bold)
                 )
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                if model.settings.realtimePronunciationEnabled {
-                  DictionaryPronunciation(value: model.dictionaryEntry?.pronunciation, size: 22)
-                }
-                if !model.realtimeEnglishOnly {
-                  if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
-                    Text("省略前：" + entry.expandedForms.joined(separator: " / "))
-                      .font(.system(size: 18)).foregroundStyle(.secondary)
-                      .multilineTextAlignment(.center)
+                VStack(spacing: 22) {
+                  if model.realtimeEnglishOnly {
+                    RealtimePronunciationSlot(value: pronunciation)
                   }
-                  if let entry = model.dictionaryEntry {
-                    let meanings = realtimeMeanings(entry.shortGloss)
-                    VStack(spacing: 12) {
-                      Text(meanings.first ?? entry.shortGloss).font(
-                        .system(size: min(44, geometry.size.width / 8.5), weight: .semibold)
-                      )
-                      .multilineTextAlignment(.center).lineSpacing(8)
-                      .fixedSize(horizontal: false, vertical: true)
-                      if meanings.count > 1 {
-                        Text(meanings.dropFirst().joined(separator: "、"))
-                          .font(.system(size: 18)).foregroundStyle(.primary.opacity(0.55))
-                          .multilineTextAlignment(.center).lineSpacing(4)
-                          .fixedSize(horizontal: false, vertical: true)
+                  if !model.realtimeEnglishOnly {
+                    if let entry = model.dictionaryEntry {
+                      let meanings = realtimeMeanings(entry.shortGloss)
+                      VStack(spacing: 12) {
+                        Text(meanings.first ?? entry.shortGloss).font(
+                          .system(size: min(44, geometry.size.width / 8.5), weight: .semibold)
+                        )
+                        .multilineTextAlignment(.center).lineSpacing(8)
+                        .fixedSize(horizontal: false, vertical: true)
+                        if meanings.count > 1 {
+                          Text(meanings.dropFirst().joined(separator: "、"))
+                            .font(.system(size: 18)).foregroundStyle(.primary.opacity(0.55))
+                            .multilineTextAlignment(.center).lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
                       }
+                    } else if model.dictionaryLoading {
+                      ProgressView()
+                    } else {
+                      Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "語義が見つかりません")
+                        .font(.title2).foregroundStyle(.secondary)
                     }
-                  } else if model.dictionaryLoading {
-                    ProgressView()
-                  } else {
-                    Text(model.pinnedExpression != nil ? "辞書に該当する表現がありません" : "語義が見つかりません")
-                      .font(.title2).foregroundStyle(.secondary)
+                    if let entry = model.dictionaryEntry, !entry.expandedForms.isEmpty {
+                      Text("省略前：" + entry.expandedForms.joined(separator: " / "))
+                        .font(.system(size: 18)).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    }
                   }
                 }
-              } else if !model.realtimeEnglishOnly {
-                Text("発話中の単語を表示します").font(.title2).foregroundStyle(.secondary)
+              }.textSelection(.enabled)
+            } else {
+              VStack {
+                if !model.realtimeEnglishOnly {
+                  Text("発話中の単語を表示します").font(.title2).foregroundStyle(.secondary)
+                }
               }
-            }.frame(maxWidth: .infinity).frame(minHeight: geometry.size.height, alignment: .center)
-              .textSelection(.enabled)
+              .frame(maxWidth: .infinity).frame(minHeight: geometry.size.height, alignment: .center)
+                .textSelection(.enabled)
+            }
           }
         }
       } else if let token = model.displayedToken {
@@ -427,7 +441,7 @@ struct PlaybackControls: View {
         .help("現在の再生位置にしおりを追加")
         .accessibilityLabel("しおりを追加")
       Button {
-        model.playing ? model.bridge.pause() : model.bridge.play()
+        model.toggleVideoPlayback()
       } label: {
         Image(systemName: model.playing ? "pause.fill" : "play.fill")
       }

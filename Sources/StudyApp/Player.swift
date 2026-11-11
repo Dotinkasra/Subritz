@@ -8,6 +8,9 @@ import WebKit
   var onTime: ((Double, Double, Int) -> Void)?
   var onListeningSample: ((ListeningPlaybackSample) -> Void)?
   var onResumePosition: ((PlaybackResumePosition, Int, Double) -> Void)?
+  var onMediaSample: ((Double, Double, Int, Double, Double) -> Void)?
+  var onMediaCommand: ((MediaPlaybackCommand) -> Void)?
+  private(set) var mediaSessionItem: NowPlayingItem?
   var onError: ((String) -> Void)?
   private var clock = PlaybackClock()
   private var timer: Timer?
@@ -65,6 +68,18 @@ import WebKit
   func receive(_ body: [String: Any], now: Double = CACurrentMediaTime(), date: Date = Date()) {
     // Ignore callbacks from the previous iframe while a replacement video loads.
     guard body["session"] as? String == playbackID else { return }
+    if let action = body["mediaCommand"] as? String {
+      switch action {
+      case "play": onMediaCommand?(.play)
+      case "pause", "stop": onMediaCommand?(.pause)
+      case "seek":
+        if let time = body["position"] as? Double, time.isFinite, time >= 0 {
+          onMediaCommand?(.seek(time))
+        }
+      default: break
+      }
+      return
+    }
     if let error = body["error"] as? Int {
       onError?("YouTube の埋め込み再生に失敗しました（\(error)）。動画の公開状態・埋め込み許可を確認してください")
       return
@@ -114,10 +129,20 @@ import WebKit
       state: state, rate: rate, audible: body["muted"] as? Bool != true && (body["volume"] as? Double ?? 100) > 0))
     clock.sample(
       time: time, now: now, state: state, rate: rate)
+    onMediaSample?(time, duration, state, rate, now)
     onTime?(clock.position(now: CACurrentMediaTime()), duration, state)
   }
   func play() { webView?.evaluateJavaScript("player?.playVideo()") }
   func pause() { webView?.evaluateJavaScript("player?.pauseVideo()") }
+  func publishMediaSession(_ item: NowPlayingItem) {
+    mediaSessionItem = item
+    webView?.evaluateJavaScript(WebMediaSession.updateScript(item, session: playbackID))
+  }
+  func clearMediaSession() {
+    guard mediaSessionItem != nil else { return }
+    mediaSessionItem = nil
+    webView?.evaluateJavaScript(WebMediaSession.updateScript(nil, session: playbackID))
+  }
   func seek(_ time: Double) {
     guard time.isFinite else { return }
     pendingSeekTime = max(0, time)
@@ -137,10 +162,14 @@ struct YouTubePlayer: NSViewRepresentable {
   func makeCoordinator() -> PlayerBridge { bridge }
   func makeNSView(context: Context) -> WKWebView {
     let configuration = WKWebViewConfiguration()
-    configuration.websiteDataStore = .nonPersistent()
+    let storeID = MediaWebsiteDataStore.makeIdentifier()
+    configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeID)
     configuration.mediaTypesRequiringUserActionForPlayback = []
     configuration.userContentController.add(bridge, name: "player")
-    let web = WKWebView(frame: .zero, configuration: configuration)
+    configuration.userContentController.addUserScript(WKUserScript(
+      source: WebMediaSession.bootstrap(item: bridge.mediaSessionItem, session: bridge.playbackID),
+      injectionTime: .atDocumentStart, forMainFrameOnly: false))
+    let web = MediaWebView(frame: .zero, configuration: configuration, storeID: storeID)
     bridge.webView = web
     bridge.startClock()
     // HTTPS base URL supplies Referer identity required by embedded YouTube clients.
@@ -162,5 +191,7 @@ struct YouTubePlayer: NSViewRepresentable {
     }
     view.configuration.userContentController.removeScriptMessageHandler(forName: "player")
     view.stopLoading()
+    view.loadHTMLString("", baseURL: nil)
+    if let id = view.configuration.websiteDataStore.identifier { MediaWebsiteDataStore.remove(id) }
   }
 }

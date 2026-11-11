@@ -53,6 +53,10 @@ struct SettingsView: View {
         Section {
           Toggle("リアルタイム辞書に発音記号を表示する",
             isOn: $model.settings.realtimePronunciationEnabled).toggleStyle(.checkbox)
+          Picker("優先する発音記号", selection: $model.settings.pronunciationRegion) {
+            Text("US（アメリカ英語）").tag(PronunciationRegion.us)
+            Text("UK（イギリス英語）").tag(PronunciationRegion.uk)
+          }
           HStack {
             Text("辞書を開く際のブラウザ")
             SettingsInfoButton(title: "辞書を開く方法について", message:

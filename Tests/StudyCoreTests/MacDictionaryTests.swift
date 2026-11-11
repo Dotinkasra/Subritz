@@ -4,6 +4,46 @@ import Testing
 
 // Independently authored definitions and examples; no system dictionary text is copied.
 struct MacDictionaryTests {
+  @Test func realtimePronunciationRetainsRegionStrengthAndGrammaticalScopes() throws {
+    let body = """
+    <span class='gramb'><span class='x_xdh'><span d:pos='1'>名詞</span></span>
+    <span class='semb'><span class='trg'>自作名義</span></span></span>
+    <span class='gramb'><span class='x_xdh'><span d:pos='2'>動詞</span>
+    <span class='pr'><span d:pr='UK' source-element-name='発音'>vɜːb</span></span>
+    <span class='frmg'><span class='frm'>～s</span><span class='pr'><span d:pr='US'>-z</span></span>;
+    <span class='frm'>～</span><span class='pr'><span d:pr='US'>pɑːst</span></span>;
+    <span class='frm'>～ing</span></span></span>
+    <span class='semb'><span class='trg'>自作動義</span>
+    <span class='exg'><span class='pr'><span d:pr='US'>ignore-example</span></span></span></span></span>
+    """
+    let xml = document(body).replacingOccurrences(of: "fictional-sound", with: "næʊn")
+    let parsed = try #require(MacDictionaryMarkup.parse(xml, headword: "sampleunit"))
+    let helpers = PronunciationTests()
+    #expect(parsed.realtimePronunciation(for: helpers.token(pos: "Noun"), region: .us) == "næʊn")
+    #expect(parsed.realtimePronunciation(for: helpers.token(form: .base), region: .us) == "vɜːb")
+    #expect(parsed.realtimePronunciation(for: helpers.token(form: .pastParticiple), region: .uk) == "pɑːst")
+    #expect(!parsed.pronunciationCandidates.contains { $0.text == "ignore-example" || $0.text == "-z" })
+    // A record cache combines POS uses without replacing the original full definition.
+    let combined = try #require(MacDictionaryMarkup.combine([parsed], pos: "Verb"))
+    #expect(combined.realtimePronunciation(for: helpers.token(), region: .uk) == "vɜːb")
+    #expect(combined.definition.contains("ignore-example"))
+  }
+  @Test func strongFormsWithoutPrimaryMarkerAndExplicitInflectionNotesAreRetained() throws {
+    let body = group("動詞", ["自作動義"])
+    let xml = document(body).replacingOccurrences(of: "<span d:prn=\"1\">fictional-sound</span>", with: """
+    <span class='pr'><span d:prn='1' d:pr='US'>wək, ək</span>,
+    <span class='oup_label'>｟強｠ </span><span d:pr='US'>strɒŋ</span></span>
+    <span class='grnote'>-ea-は<span class='pr'><span d:pr='US'>ignore-fragment</span></span>;
+    過去形･過去分詞の発音は<span class='pr'><span d:pr='US'>pɑːst</span></span>である</span>
+    """)
+    let parsed = try #require(MacDictionaryMarkup.parse(xml, headword: "sampleunit"))
+    let helpers = PronunciationTests()
+    #expect(parsed.realtimePronunciation(for: helpers.token(form: .base), region: .us) == "wək")
+    #expect(parsed.realtimePronunciation(for: helpers.token(form: .pastParticiple), region: .us) == "pɑːst")
+    #expect(parsed.pronunciationCandidates.contains { $0.text == "strɒŋ" && $0.strength == .strong })
+    #expect(!parsed.pronunciationCandidates.contains { $0.text == "ignore-fragment" })
+    #expect(parsed.definition.contains("strɒŋ") && parsed.definition.contains("過去分詞"))
+  }
   @Test func argumentSlotsInAnchoredIdiomsCannotConsumeLiteralSubtitleArticles() {
     #expect(MacDictionaryMarkup.phraseHeadword("sampleunit at A", anchored: true) == "sampleunit at")
     #expect(MacDictionaryMarkup.phraseHeadword("sampleunit A for B", anchored: true) == nil)

@@ -41,6 +41,7 @@ extension StudyModel {
     await libraryOperation?.value
     await listeningSaveTask?.value
     await finishBackupBeforeQuitting()
+    await MediaWebsiteDataStore.finishPendingRemovals()
   }
 }
 

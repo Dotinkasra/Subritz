@@ -5,6 +5,35 @@ import Testing
 @testable import StudyCore
 
 @MainActor struct AdvancedModeTests {
+  @Test func regionPreferenceImmediatelyReusesWarmedCandidatesWithoutRestartingLookup() async throws {
+    let (model, tokens, root, defaults, suite) = try await DictionaryExpressionInteractionTests().fixture()
+    defer {
+      model.closeVideo(); defaults.removePersistentDomain(forName: suite)
+      try? FileManager.default.removeItem(at: root)
+    }
+    let file = root.appendingPathComponent("regions.txt")
+    try "■stack up : 【発音】[US]us-first | us-second | [UK]uk-first\n■stack up {句自動} : 自作句義"
+      .write(to: file, atomically: true, encoding: .utf8)
+    _ = try await model.eijiro?.importFile(file)
+    model.setAdvancedMode(true)
+    model.update(time: tokens[1].startTime + 0.01, duration: 5, state: 2)
+    await model.dictionaryTask?.value
+    let entry = try #require(model.dictionaryEntry), token = try #require(model.displayedToken)
+    let query = model.selectedDictionaryID, session = model.session
+    let keys = Set(model.dictionaryCache.keys)
+    for region in PronunciationRegion.allCases {
+      let previous = model.settings
+      model.settings.pronunciationRegion = region
+      model.saveSettings(previous: previous)
+      #expect(AppSettings.load(defaults: defaults).pronunciationRegion == region)
+      #expect(model.dictionaryEntry?.realtimePronunciation(for: token, region: region)
+        == (region == .us ? "us-first" : "uk-first"))
+      #expect(model.dictionaryEntry?.pronunciation == entry.pronunciation)
+      #expect(model.dictionaryEntry?.definition == entry.definition)
+      #expect(model.selectedDictionaryID == query && model.session == session)
+      #expect(Set(model.dictionaryCache.keys) == keys && model.dictionaryTask?.isCancelled == false)
+    }
+  }
   @Test func pronunciationRemainsAvailableInImmersionAndPreferenceSavesWithoutRestartingLookup() async throws {
     let (model, tokens, root, defaults, suite) = try await DictionaryExpressionInteractionTests().fixture()
     defer {

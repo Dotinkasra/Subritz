@@ -126,7 +126,8 @@ import SwiftUI
   var realtimeEnglishOnly: Bool {
     settings.advancedMode && realtime && !dictionaryIsPinned && hoverToken == nil
   }
-  let bridge = PlayerBridge()
+  let bridge: PlayerBridge
+  let nowPlaying: NowPlayingController
   var storageTask: Task<(StudyStore, EijiroProvider), Error>?
   var store: StudyStore?
   var eijiro: EijiroProvider?
@@ -153,8 +154,12 @@ import SwiftUI
   var lastPriorityTime: Double = -300
   var activeSentenceIndex: Int?
   var initialPlaybackTime: Double = 0
-  init(prepareStorage: Bool = true, defaults: UserDefaults = .standard) {
+  init(prepareStorage: Bool = true, defaults: UserDefaults = .standard,
+    nowPlayingOutput: (any NowPlayingOutput)? = nil) {
     self.defaults = defaults
+    let bridge = PlayerBridge()
+    self.bridge = bridge
+    nowPlaying = NowPlayingController(output: nowPlayingOutput ?? (prepareStorage ? WebNowPlayingOutput(bridge: bridge) : nil))
     settings = AppSettings.load(defaults: defaults)
     backupPreferences = BackupPreferences.load(defaults)
     if let path = defaults.string(forKey: "lastRecoveryBackupPath") { lastRecoveryURL = URL(fileURLWithPath: path) }
@@ -164,8 +169,13 @@ import SwiftUI
     bridge.onResumePosition = { [weak self] position, state, uptime in
       self?.recordHistoryPosition(position, state: state, uptime: uptime)
     }
+    bridge.onMediaSample = { [weak self] time, duration, state, rate, uptime in
+      self?.nowPlaying.sample(time: time, duration: duration, state: state, rate: rate, uptime: uptime)
+    }
+    bridge.onMediaCommand = { [weak self] command in _ = self?.nowPlaying.handle(command) }
     bridge.onError = { [weak self] message in self?.error = message }
     guard prepareStorage else { return }
+    MediaWebsiteDataStore.cleanUpAbandoned()
     let directory = settings.cacheURL
     storageTask = Task.detached { (try StudyStore(directory: directory), try EijiroProvider()) }
     startLibrary()
@@ -352,6 +362,7 @@ import SwiftUI
     bridge.prepareForVideo(at: start)
     loading = false
     ready = true
+    if let video = document?.video { beginNowPlaying(video: video, position: start) }
     phase = .ready
     grammarError = nil
     stage = grammarEnabledForVideo
@@ -647,6 +658,7 @@ import SwiftUI
   func dictionaryKey(_ token: Token) -> String {
     settings.dictionary + ":" + token.normalized + ":" + (token.partOfSpeech ?? "") + ":"
       + (token.lemma ?? "")
+      + ":" + (token.pronunciationInflection?.rawValue ?? "")
   }
   func prefetchDictionary(at time: Double) {
     prefetchDictionary(nearLine: timeline?.line(at: time)?.id)
@@ -747,6 +759,7 @@ import SwiftUI
     }
   }
   func closeVideo() {
+    nowPlaying.end()
     resetListeningPlayback(clearCoverage: true)
     resetSubtitleSearchForVideo()
     subtitleScrollPinned = false
