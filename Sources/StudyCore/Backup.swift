@@ -32,6 +32,7 @@ public struct LibraryBackupData: Codable, Sendable {
       favorites.allSatisfy({
         !$0.id.isEmpty && $0.id == DictionaryText.normalize($0.surface)
           && validDate($0.savedAt) && $0.sourceTime.isFinite && $0.sourceTime >= 0
+          && ($0.archivedAt.map(validDate) ?? true)
           && ($0.sourceVideo.map(validVideo) ?? true)
       }),
       timestamps.allSatisfy({

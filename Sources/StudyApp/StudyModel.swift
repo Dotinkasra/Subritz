@@ -64,6 +64,7 @@ import SwiftUI
   @Published var historyPositionSaveError: String?
   @Published var videoHistory: [VideoHistoryItem] = []
   @Published var favoriteWords: [FavoriteWord] = []
+  @Published var favoriteExportArchived = false
   @Published var videoTimestamps: [VideoTimestamp] = []
   @Published var savingBookmark = false
   @Published var timestampMessage = ""

@@ -147,7 +147,7 @@ extension StudyModel {
   }
   var displayedWordIsFavorite: Bool {
     guard let id = displayedFavoriteID else { return false }
-    return favoriteWords.contains { $0.id == id }
+    return favoriteWords.contains { $0.id == id && !$0.isArchived }
   }
   var canToggleDisplayedFavorite: Bool {
     guard let id = displayedFavoriteID else { return false }
@@ -158,6 +158,10 @@ extension StudyModel {
     else { return }
     if displayedWordIsFavorite {
       removeFavorite(id)
+      return
+    }
+    if favoriteWords.contains(where: { $0.id == id && $0.isArchived }) {
+      setFavoriteArchived(id, archived: false)
       return
     }
     pendingFavoriteIDs.insert(id)
@@ -182,6 +186,14 @@ extension StudyModel {
     mutateLibrary(favoriteID: id) { library in
       try await library.removeFavorite(id)
     }
+  }
+  func setFavoriteArchived(_ id: String, archived: Bool) {
+    guard !pendingFavoriteIDs.contains(id), library != nil, !isRestoringBackup else { return }
+    pendingFavoriteIDs.insert(id)
+    mutateLibrary(favoriteID: id) { try await $0.setFavoriteArchived(id, archived: archived) }
+  }
+  var favoriteExportWords: [FavoriteWord] {
+    favoriteWords.filter { $0.isArchived == favoriteExportArchived }
   }
   func removeHistory(_ item: VideoHistoryItem) {
     mutateLibrary { try await $0.removeHistory(item.id) }

@@ -26,6 +26,8 @@ public struct FavoriteWord: Codable, Sendable, Identifiable {
   public var sourceVideo: Video?
   public var sourceTime: Double
   public var savedAt: Date
+  public var archivedAt: Date? = nil
+  public var isArchived: Bool { archivedAt != nil }
   public init(token: Token, entry: DictionaryEntry?, video: Video?, savedAt: Date = Date()) {
     id = DictionaryText.normalize(token.surface)
     surface = token.surface
@@ -183,6 +185,7 @@ public actor LibraryStore {
   public func removeHistory(_ id: String) throws {
     try db.execute("DELETE FROM video_history WHERE video_id=?", values: [id])
   }
+  /// Includes archived words so backups retain the complete collection.
   public func favorites() throws -> [FavoriteWord] {
     try db.rows("SELECT payload FROM favorite_words ORDER BY saved DESC,rowid DESC").map {
       try JSONDecoder().decode(FavoriteWord.self, from: Data($0[0].utf8))
@@ -213,6 +216,22 @@ public actor LibraryStore {
     do {
       try db.execute("DELETE FROM favorite_words WHERE word=?", values: [word])
       try db.execute("DELETE FROM video_timestamps WHERE id=?", values: ["favorite:" + word])
+      try db.execute("COMMIT")
+    } catch { try? db.execute("ROLLBACK"); throw error }
+  }
+  public func setFavoriteArchived(_ id: String, archived: Bool, at date: Date = Date()) throws {
+    guard date.timeIntervalSince1970.isFinite else { throw AppFailure("アーカイブ日時が正しくありません") }
+    let id = DictionaryText.normalize(id)
+    try db.execute("BEGIN IMMEDIATE")
+    do {
+      guard let row = try db.rows("SELECT payload FROM favorite_words WHERE word=?", values: [id]).first
+      else { throw AppFailure("対象の単語が見つかりません") }
+      var word = try JSONDecoder().decode(FavoriteWord.self, from: Data(row[0].utf8))
+      if word.isArchived != archived {
+        word.archivedAt = archived ? date : nil
+        // Registration date, dictionary content and occurrences remain untouched.
+        try db.execute("UPDATE favorite_words SET payload=? WHERE word=?", values: [try encode(word), id])
+      }
       try db.execute("COMMIT")
     } catch { try? db.execute("ROLLBACK"); throw error }
   }
