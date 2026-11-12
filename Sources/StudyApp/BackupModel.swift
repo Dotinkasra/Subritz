@@ -218,6 +218,7 @@ extension StudyModel {
         try await library.restoreBackupData(archive.library)
         // The database transaction has committed; preference writes cannot fail.
         settings = restored
+        videoShape.reset(template: restored.videoMaskTemplate)
         restored.save(defaults: defaults)
         store = newStore
         listeningBuffer = ListeningBuffer()

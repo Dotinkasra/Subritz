@@ -128,6 +128,7 @@ import SwiftUI
   }
   let bridge: PlayerBridge
   let nowPlaying: NowPlayingController
+  let videoShape: VideoShapeModel
   var storageTask: Task<(StudyStore, EijiroProvider), Error>?
   var store: StudyStore?
   var eijiro: EijiroProvider?
@@ -157,10 +158,20 @@ import SwiftUI
   init(prepareStorage: Bool = true, defaults: UserDefaults = .standard,
     nowPlayingOutput: (any NowPlayingOutput)? = nil) {
     self.defaults = defaults
+    let initialSettings = AppSettings.load(defaults: defaults)
+    videoShape = VideoShapeModel(template: initialSettings.videoMaskTemplate)
     let bridge = PlayerBridge()
     self.bridge = bridge
     nowPlaying = NowPlayingController(output: nowPlayingOutput ?? (prepareStorage ? WebNowPlayingOutput(bridge: bridge) : nil))
-    settings = AppSettings.load(defaults: defaults)
+    settings = initialSettings
+    videoShape.onTemplateChange = { [weak self] template in
+      guard let self, self.settings.videoMaskTemplate != template else { return }
+      self.settings.videoMaskTemplate = template
+      self.settings.save(defaults: self.defaults)
+      self.markBackupChanged()
+    }
+    videoShape.onVisibilityChange = { [weak bridge] enabled in bridge?.setShapeControlsEnabled(enabled) }
+    bridge.onShapeControls = { [weak videoShape] rects in videoShape?.setProtectedControls(rects) }
     backupPreferences = BackupPreferences.load(defaults)
     if let path = defaults.string(forKey: "lastRecoveryBackupPath") { lastRecoveryURL = URL(fileURLWithPath: path) }
     liveTranscriptCache.setLimit(settings.liveSpeechCacheMB * 1024 * 1024)
@@ -759,6 +770,7 @@ import SwiftUI
     }
   }
   func closeVideo() {
+    videoShape.reset()
     nowPlaying.end()
     resetListeningPlayback(clearCoverage: true)
     resetSubtitleSearchForVideo()

@@ -199,9 +199,10 @@ private actor TimestampVideoProvider: YouTubeProvider {
     let replacement = WKWebView(frame: .zero, configuration: configuration)
     let bridge = PlayerBridge()
     bridge.webView = replacement
-    YouTubePlayer.dismantleNSView(old, coordinator: bridge)
+    let shape = VideoShapeModel(template: .initial)
+    YouTubePlayer.dismantleNSView(VideoPlayerSurface(player: old, model: shape), coordinator: bridge)
     #expect(bridge.webView === replacement)
-    YouTubePlayer.dismantleNSView(replacement, coordinator: bridge)
+    YouTubePlayer.dismantleNSView(VideoPlayerSurface(player: replacement, model: shape), coordinator: bridge)
     #expect(bridge.webView == nil)
   }
 }

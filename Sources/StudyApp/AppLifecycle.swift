@@ -125,12 +125,24 @@ struct MainWindowLifecycle: NSViewRepresentable {
       originalDelegate = nil
     }
     func handleKeyDown(_ event: NSEvent) -> NSEvent? {
-      guard event.keyCode == 53,
-        event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-        let window, event.window === window, window.attachedSheet == nil,
+      guard let window, window.attachedSheet == nil,
         let model else { return event }
+      let inMainWindow = event.window === window
+      let inShapePalette = model.videoShape.colorPanelActive && event.window === NSColorPanel.shared
+      let inShapeControls = model.videoShape.controlsWindow.map { event.window === $0 } ?? false
+      guard inMainWindow || inShapePalette || inShapeControls else { return event }
+      let editingText = (event.window?.firstResponder as? NSTextView)?.isEditable == true
+      if !editingText, model.videoShape.handleKey(code: event.keyCode, modifiers: event.modifierFlags) {
+        return nil
+      }
+      guard inMainWindow, event.keyCode == 53,
+        event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return event }
       if model.subtitleSearchVisible {
         model.closeSubtitleSearch()
+        return nil
+      }
+      if model.videoShape.selected {
+        model.videoShape.selected = false
         return nil
       }
       guard model.dictionaryIsPinned else { return event }

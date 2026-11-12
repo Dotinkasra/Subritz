@@ -148,6 +148,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
   public var advancedMode = false
   public var realtimePronunciationEnabled = true
   public var pronunciationRegion = PronunciationRegion.us
+  public var videoMaskTemplate = VideoMaskShape.initial
   public var wordSpeechQuality = WordSpeechQuality.standard
   public var subtitleRowSpacing = 1.0
   public var liveSubtitleRowSpacing = 1.0
@@ -186,7 +187,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
   enum CodingKeys: String, CodingKey {
     case ytDlpPath, codexPath, dictionary, provider, baseURL, localModel, codexModel,
       cacheDirectory, timeout, cacheMB, localConcurrency, codexConcurrency, aiGrammarEnabled,
-      advancedMode, dictionaryBrowser, realtimePronunciationEnabled, pronunciationRegion, wordSpeechQuality,
+      advancedMode, dictionaryBrowser, realtimePronunciationEnabled, pronunciationRegion, videoMaskTemplate, wordSpeechQuality,
       speechAudioSource, speechMicrophoneID, liveSpeechCacheMB,
       subtitleRowSpacing, liveSubtitleRowSpacing, workspaceUpperFraction, workspaceLeadingFraction,
       subtitleWrapCharacters, liveSubtitleWrapCharacters, subtitleFontScale, liveSubtitleFontScale
@@ -209,6 +210,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
       ?? realtimePronunciationEnabled
     pronunciationRegion = (try? c.decodeIfPresent(PronunciationRegion.self, forKey: .pronunciationRegion))
       ?? pronunciationRegion
+    videoMaskTemplate = (try? c.decodeIfPresent(VideoMaskShape.self, forKey: .videoMaskTemplate))?.normalized
+      ?? videoMaskTemplate
     wordSpeechQuality = (try? c.decodeIfPresent(WordSpeechQuality.self, forKey: .wordSpeechQuality))
       ?? wordSpeechQuality
     subtitleRowSpacing = min(1, max(0, try c.decodeIfPresent(Double.self, forKey: .subtitleRowSpacing) ?? subtitleRowSpacing))

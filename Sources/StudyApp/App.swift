@@ -82,7 +82,8 @@ struct MainView: View {
             LiveSpeechPanel(model: model).frame(maxWidth: .infinity)
           } else {
             VStack(spacing: 8) {
-              YouTubePlayer(videoID: document.video.id, bridge: model.bridge).id(model.session)
+              YouTubePlayer(videoID: document.video.id, bridge: model.bridge,
+                shape: model.videoShape, shapeEnabled: !videoHidden).id(model.session)
                 .allowsHitTesting(!videoHidden)
                 .accessibilityHidden(videoHidden)
                 .overlay {
@@ -180,6 +181,7 @@ struct MainView: View {
       }
     }
     .onChange(of: model.session) { _, _ in videoHidden = false }
+    .onChange(of: videoHidden) { _, hidden in if hidden { model.videoShape.selected = false } }
     .alert(model.isLiveSpeech ? "音声認識を閉じますか？" : "本当に動画を閉じますか？", isPresented: $model.confirmCloseVideo) {
       Button("キャンセル", role: .cancel) {}
       Button(model.isLiveSpeech ? "音声認識を閉じる" : "動画を閉じる", role: .destructive) { model.closeVideo() }
@@ -450,6 +452,7 @@ struct PlaybackControls: View {
         value: Binding(get: { position.time }, set: { model.seek($0) }),
         in: 0...max(1, position.duration))
       Text(PlaybackTime.format(position.duration)).monospacedDigit().font(.caption)
+      VideoShapeControls(model: model.videoShape)
       Button {
         videoHidden.toggle()
       } label: {
