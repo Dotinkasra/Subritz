@@ -10,6 +10,8 @@ import WebKit
   var onResumePosition: ((PlaybackResumePosition, Int, Double) -> Void)?
   var onMediaSample: ((Double, Double, Int, Double, Double) -> Void)?
   var onMediaCommand: ((MediaPlaybackCommand) -> Void)?
+  var onShapeControls: (([CGRect]) -> Void)?
+  private(set) var shapeControlsEnabled = false
   private(set) var mediaSessionItem: NowPlayingItem?
   var onError: ((String) -> Void)?
   private var clock = PlaybackClock()
@@ -68,6 +70,15 @@ import WebKit
   func receive(_ body: [String: Any], now: Double = CACurrentMediaTime(), date: Date = Date()) {
     // Ignore callbacks from the previous iframe while a replacement video loads.
     guard body["session"] as? String == playbackID else { return }
+    if let controls = body["shapeControls"] as? [[String: Double]], shapeControlsEnabled {
+      let rects = controls.prefix(20).compactMap { value -> CGRect? in
+        guard let x = value["x"], let y = value["y"], let width = value["width"], let height = value["height"],
+          [x,y,width,height].allSatisfy(\.isFinite), width > 0, height > 0 else { return nil }
+        return CGRect(x: x, y: y, width: width, height: height).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+      }.filter { !$0.isNull && !$0.isEmpty }
+      onShapeControls?(rects)
+      return
+    }
     if let action = body["mediaCommand"] as? String {
       switch action {
       case "play": onMediaCommand?(.play)
@@ -134,6 +145,12 @@ import WebKit
   }
   func play() { webView?.evaluateJavaScript("player?.playVideo()") }
   func pause() { webView?.evaluateJavaScript("player?.pauseVideo()") }
+  func setShapeControlsEnabled(_ enabled: Bool) {
+    guard shapeControlsEnabled != enabled else { return }
+    shapeControlsEnabled = enabled
+    webView?.evaluateJavaScript(VideoPlayerControlRegions.update(enabled: enabled, session: playbackID))
+    if !enabled { onShapeControls?([]) }
+  }
   func publishMediaSession(_ item: NowPlayingItem) {
     mediaSessionItem = item
     webView?.evaluateJavaScript(WebMediaSession.updateScript(item, session: playbackID))
@@ -159,13 +176,18 @@ import WebKit
 struct YouTubePlayer: NSViewRepresentable {
   let videoID: String
   let bridge: PlayerBridge
+  @ObservedObject var shape: VideoShapeModel
+  var shapeEnabled = true
   func makeCoordinator() -> PlayerBridge { bridge }
-  func makeNSView(context: Context) -> WKWebView {
+  func makeNSView(context: Context) -> VideoPlayerSurface {
     let configuration = WKWebViewConfiguration()
     let storeID = MediaWebsiteDataStore.makeIdentifier()
     configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeID)
     configuration.mediaTypesRequiringUserActionForPlayback = []
     configuration.userContentController.add(bridge, name: "player")
+    configuration.userContentController.addUserScript(WKUserScript(
+      source: VideoPlayerControlRegions.bootstrap(enabled: bridge.shapeControlsEnabled, session: bridge.playbackID),
+      injectionTime: .atDocumentStart, forMainFrameOnly: false))
     configuration.userContentController.addUserScript(WKUserScript(
       source: WebMediaSession.bootstrap(item: bridge.mediaSessionItem, session: bridge.playbackID),
       injectionTime: .atDocumentStart, forMainFrameOnly: false))
@@ -180,10 +202,14 @@ struct YouTubePlayer: NSViewRepresentable {
       function onYouTubeIframeAPIReady(){ player=new YT.Player('player',{videoId:'\(videoID)',playerVars:{playsinline:1,origin:'https://jp.local.youtubeenglishstudy',cc_load_policy:0},events:{onReady:()=>{post({ready:true});sample();setInterval(sample,50)},onStateChange:sample,onPlaybackRateChange:sample,onError:e=>post({error:e.data})}}) }
       </script><script src="https://www.youtube.com/iframe_api"></script></body></html>
       """, baseURL: URL(string: "https://jp.local.youtubeenglishstudy"))
-    return web
+    return VideoPlayerSurface(player: web, model: shape)
   }
-  func updateNSView(_ view: WKWebView, context: Context) {}
-  static func dismantleNSView(_ view: WKWebView, coordinator: PlayerBridge) {
+  func updateNSView(_ view: VideoPlayerSurface, context: Context) {
+    view.canvas.refresh(enabled: shapeEnabled)
+    bridge.setShapeControlsEnabled(shape.visible && shapeEnabled)
+  }
+  static func dismantleNSView(_ surface: VideoPlayerSurface, coordinator: PlayerBridge) {
+    guard let view = surface.player as? WKWebView else { return }
     // SwiftUI can create the replacement iframe before dismantling the old one.
     if coordinator.webView === view {
       coordinator.stopClock()

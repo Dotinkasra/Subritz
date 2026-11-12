@@ -73,6 +73,10 @@ enum WebMediaSession {
 @MainActor enum MediaWebsiteDataStore {
   private static let key = "temporaryMediaWebsiteDataStores"
   private static var removals: [UUID: Task<Void, Never>] = [:]
+  // The class-level removal API can reach an uninitialized WebKit run loop on
+  // a cold launch. Construct an ephemeral store once before any removal; no
+  // web view, persistent profile, or network request is needed.
+  private static let initializedForRemoval: Void = { _ = WKWebsiteDataStore.nonPersistent() }()
   static func makeIdentifier() -> UUID {
     let id = UUID()
     var identifiers = UserDefaults.standard.stringArray(forKey: key) ?? []
@@ -92,6 +96,7 @@ enum WebMediaSession {
     }
   }
   static func deleteReleasedStore(_ id: UUID) async throws {
+    _ = initializedForRemoval
     let delays: [UInt64] = [100_000_000, 250_000_000, 500_000_000, 1_000_000_000, 1_000_000_000]
     for attempt in 0...delays.count {
       do { try await WKWebsiteDataStore.remove(forIdentifier: id); return }

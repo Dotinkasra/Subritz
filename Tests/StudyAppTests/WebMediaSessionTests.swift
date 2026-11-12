@@ -26,6 +26,48 @@ import WebKit
   let item = NowPlayingItem(videoID: "authored", title: "検証用 'quoted' <title>", duration: 120,
     elapsed: 12, rate: 1.5, state: .playing, thumbnailURL: URL(string: "https://example.invalid/fixture.png"))
 
+  @Test func abandonedStoreRemovalIsSafeBeforeAnyWebViewInAFreshProcess() throws {
+    // Other tests initialize WebKit, concealing this launch-only crash. Compile
+    // the actual cleanup implementation into an isolated process with no views.
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .deletingLastPathComponent().deletingLastPathComponent()
+    let source = try String(contentsOf: root.appendingPathComponent("Sources/StudyApp/WebMediaSession.swift"), encoding: .utf8)
+    let start = try #require(source.range(of: "@MainActor enum MediaWebsiteDataStore"))
+    let end = try #require(source.range(of: "\n@MainActor final class MediaWebView"))
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Subritz-Cold-WebKit-\(UUID())")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let probe = directory.appendingPathComponent("Probe.swift")
+    let binary = directory.appendingPathComponent("probe")
+    try ("import AppKit\nimport WebKit\n" + source[start.lowerBound..<end.lowerBound] + """
+
+      @main struct Probe {
+        @MainActor static func main() {
+          _ = NSApplication.shared
+          Task { @MainActor in
+            do { try await MediaWebsiteDataStore.deleteReleasedStore(UUID()); exit(0) }
+            catch { print(error); exit(1) }
+          }
+          DispatchQueue.main.asyncAfter(deadline: .now() + 10) { exit(2) }
+          RunLoop.main.run()
+        }
+      }
+      """).write(to: probe, atomically: true, encoding: .utf8)
+    func run(_ executable: URL, _ arguments: [String]) throws -> (Int32, String) {
+      let process = Process()
+      let output = Pipe()
+      process.executableURL = executable; process.arguments = arguments
+      process.standardOutput = output; process.standardError = output
+      try process.run(); process.waitUntilExit()
+      return (process.terminationStatus, String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+    }
+    let compile = try run(URL(fileURLWithPath: "/usr/bin/xcrun"), ["--sdk", "macosx", "swiftc", "-O", "-parse-as-library",
+      "-module-cache-path", directory.appendingPathComponent("modules").path, probe.path, "-o", binary.path])
+    try #require(compile.0 == 0, "\(compile.1)")
+    let result = try run(binary, [])
+    #expect(result.0 == 0, "Fresh-process cleanup exited with \(result.0): \(result.1)")
+  }
+
   @Test func metadataIsSafelyEncodedAndTheWebPageIsTheOnlyPublisher() throws {
     let data = Data(WebMediaSession.payload(item, session: "fixture-session").utf8)
     let payload = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
