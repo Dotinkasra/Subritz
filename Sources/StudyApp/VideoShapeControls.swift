@@ -6,7 +6,7 @@ struct VideoShapeControls: View {
   @ObservedObject var model: VideoShapeModel
   @State private var showing = false
   var body: some View {
-    Button("字幕マスク", systemImage: "rectangle.on.rectangle") { showing.toggle() }
+    Button("字幕マスク", systemImage: "square.on.circle.fill") { showing.toggle() }
       .labelStyle(.iconOnly).help("動画に重ねる字幕マスクのシェイプを操作")
       .accessibilityLabel("字幕マスクのシェイプ")
       .popover(isPresented: $showing, arrowEdge: .bottom) {
@@ -15,9 +15,18 @@ struct VideoShapeControls: View {
           HStack {
             Button("追加", systemImage: "plus.rectangle") { model.add(); showing = false }
               .disabled(model.shape != nil)
-            Button(model.visible ? "非表示" : "表示", systemImage: model.visible ? "eye.slash" : "eye") {
+            Button {
               model.setVisible(!model.visible)
-            }.disabled(model.shape == nil)
+            } label: {
+              HStack(spacing: 4) {
+                Image(systemName: model.visible ? "eye.slash" : "eye")
+                  .frame(width: 16, height: 16).accessibilityHidden(true)
+                // Reserve the longer label's width in both states.
+                Text("非表示").hidden()
+                  .overlay { Text(model.visible ? "非表示" : "表示") }
+              }.fixedSize()
+            }.accessibilityLabel(model.visible ? "非表示" : "表示")
+              .disabled(model.shape == nil)
             Button("削除", systemImage: "trash", role: .destructive) { model.delete() }
               .disabled(model.shape == nil)
           }
